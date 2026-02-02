@@ -1,11 +1,10 @@
 import arcade
-import json
 import random
 import time
 import sqlite3
 import os
 import math
-from typing import List, Dict, Tuple, Optional, Set
+from typing import List, Tuple
 from dataclasses import dataclass
 
 SCREEN_WIDTH = 1000

@@ -8,7 +8,6 @@ import math
 from typing import List, Dict, Tuple, Optional, Set
 from dataclasses import dataclass
 
-
 SCREEN_WIDTH = 1000
 SCREEN_HEIGHT = 750
 SCREEN_TITLE = "English Maze Adventure"
@@ -62,6 +61,15 @@ LEVEL_SCORES = {
 }
 
 
+def get_keys_text(keys_needed: int) -> str:
+    if keys_needed % 10 == 1 and keys_needed % 100 != 11:
+        return "ключ"
+    elif 2 <= keys_needed % 10 <= 4 and (keys_needed % 100 < 10 or keys_needed % 100 >= 20):
+        return "ключа"
+    else:
+        return "ключей"
+
+
 @dataclass
 class EnglishQuestion:
     id: str
@@ -72,6 +80,131 @@ class EnglishQuestion:
     correct_answer: str
     explanation: str
     hint: str
+
+
+class PhysicsEngine:
+
+    def __init__(self):
+        self.gravity = GRAVITY
+        self.damping = 0.9
+        self.player_speed = PLAYER_SPEED
+        self.player_width = 35
+        self.player_height = 50
+
+    def check_collision_with_walls(self, player_x, player_y, walls):
+        player_left = player_x - self.player_width // 2
+        player_right = player_x + self.player_width // 2
+        player_bottom = player_y - self.player_height // 2
+        player_top = player_y + self.player_height // 2
+
+        for wall_x, wall_y, wall_width, wall_height in walls:
+            # Границы стены
+            wall_left = wall_x - wall_width // 2
+            wall_right = wall_x + wall_width // 2
+            wall_bottom = wall_y - wall_height // 2
+            wall_top = wall_y + wall_height // 2
+
+            if (player_right > wall_left and
+                    player_left < wall_right and
+                    player_top > wall_bottom and
+                    player_bottom < wall_top):
+                return True
+        return False
+
+    def check_collision_with_wall_sides(self, player_x, player_y, wall):
+        wall_x, wall_y, wall_width, wall_height = wall
+
+        player_left = player_x - self.player_width // 2
+        player_right = player_x + self.player_width // 2
+        player_bottom = player_y - self.player_height // 2
+        player_top = player_y + self.player_height // 2
+
+        wall_left = wall_x - wall_width // 2
+        wall_right = wall_x + wall_width // 2
+        wall_bottom = wall_y - wall_height // 2
+        wall_top = wall_y + wall_height // 2
+
+        overlap_left = player_right - wall_left
+        overlap_right = wall_right - player_left
+        overlap_top = wall_top - player_bottom
+        overlap_bottom = player_top - wall_bottom
+
+        min_overlap = min(overlap_left, overlap_right, overlap_top, overlap_bottom)
+
+        if min_overlap == overlap_left:
+            return "left", overlap_left
+        elif min_overlap == overlap_right:
+            return "right", overlap_right
+        elif min_overlap == overlap_top:
+            return "top", overlap_top
+        else:
+            return "bottom", overlap_bottom
+
+    def check_collision_with_walls_at(self, x, y, walls):
+        return self.check_collision_with_walls(x, y, walls)
+
+    def check_collision_with_platform(self, player_x, player_y, platform):
+        player_left = player_x - self.player_width // 2
+        player_right = player_x + self.player_width // 2
+        player_bottom = player_y - self.player_height // 2
+        player_top = player_y + self.player_height // 2
+
+        left = platform.center_x - platform.width // 2
+        right = platform.center_x + platform.width // 2
+        bottom = platform.center_y - platform.height // 2
+        top = platform.center_y + platform.height // 2
+
+        return (player_right > left and
+                player_left < right and
+                player_top > bottom and
+                player_bottom < top)
+
+    def apply_gravity(self, velocity_y, on_ground, delta_time):
+        if not on_ground:
+            velocity_y -= self.gravity * delta_time * 60
+            if velocity_y < -15:
+                velocity_y = -15
+        else:
+            velocity_y = 0
+        return velocity_y
+
+    def apply_movement(self, player_x, player_y, dx, dy, walls, platforms, delta_time):
+        if dx == 0 and dy == 0:
+            return player_x, player_y, self.check_on_ground(player_x, player_y, platforms)
+
+        move_speed = self.player_speed * delta_time
+
+        new_x = player_x
+        new_y = player_y
+
+        if dx != 0:
+            new_x = player_x + dx * move_speed
+            if self.check_collision_with_walls(new_x, player_y, walls):
+                new_x = player_x
+
+        if dy != 0:
+            new_y = player_y + dy * move_speed
+            if self.check_collision_with_walls(player_x, new_y, walls):
+                new_y = player_y
+
+        on_ground = self.check_on_ground(new_x, new_y, platforms)
+
+        if not on_ground and dy <= 0:
+            if new_y < 45 + self.player_height // 2:
+                new_y = 45 + self.player_height // 2
+                on_ground = True
+
+        return new_x, new_y, on_ground
+
+    def check_on_ground(self, player_x, player_y, platforms):
+        for platform in platforms:
+            if self.check_collision_with_platform(player_x, player_y, platform):
+                player_bottom = player_y - self.player_height // 2
+                platform_top = platform.center_y + platform.height // 2
+
+                if abs(player_bottom - platform_top) < 5:
+                    return True
+        return False
 
 
 class PlayerDatabase:
@@ -123,6 +256,723 @@ class PlayerDatabase:
                 date_achieved TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS english_questions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                question_level TEXT NOT NULL,
+                question_type TEXT NOT NULL,
+                question_text TEXT NOT NULL,
+                option1 TEXT NOT NULL,
+                option2 TEXT NOT NULL,
+                option3 TEXT NOT NULL,
+                option4 TEXT NOT NULL,
+                correct_option TEXT NOT NULL,
+                explanation TEXT NOT NULL,
+                hint TEXT NOT NULL,
+                difficulty INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_level_type ON english_questions(question_level, question_type)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_level ON english_questions(question_level)')
+
+        conn.commit()
+        conn.close()
+
+        self.initialize_questions()
+
+    def initialize_questions(self):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute('SELECT COUNT(*) FROM english_questions')
+        count = cursor.fetchone()[0]
+
+        if count == 0:
+            print("База данных вопросов пуста. Загружаем базовые вопросы...")
+            self.load_sample_questions()
+        else:
+            print(f"В базе данных уже есть {count} вопросов.")
+
+        conn.close()
+
+    def load_sample_questions(self):
+        sample_questions = []
+
+        # A1 вопросы
+        a1_questions = [
+            ('A1', 'vocabulary', 'What is "apple" in Russian?', 'Яблоко', 'Банан', 'Апельсин', 'Груша', 'Яблоко',
+             '"Apple" = яблоко', 'Common fruit', 1),
+            ('A1', 'grammar', 'I ___ a student.', 'am', 'is', 'are', 'be', 'am', 'I am', 'First person', 1),
+            ('A1', 'vocabulary', 'What color is "red"?', 'Красный', 'Синий', 'Зеленый', 'Желтый', 'Красный',
+             'Red = красный', 'Primary color', 1),
+            ('A1', 'vocabulary', 'What is "book" in Russian?', 'Книга', 'Тетрадь', 'Ручка', 'Стол', 'Книга',
+             'Book = книга', 'You read it', 1),
+            ('A1', 'grammar', 'She ___ a teacher.', 'am', 'is', 'are', 'be', 'is', 'She is', 'Third person', 1),
+            ('A1', 'grammar', 'We ___ friends.', 'am', 'is', 'are', 'be', 'are', 'We are', 'Plural', 1),
+            ('A1', 'vocabulary', 'What is "house" in Russian?', 'Дом', 'Квартира', 'Офис', 'Школа', 'Дом',
+             'House = дом', 'Building', 1),
+            ('A1', 'grammar', 'He ___ happy.', 'am', 'is', 'are', 'be', 'is', 'He is', 'Third person', 1),
+            ('A1', 'vocabulary', 'What is "water" in Russian?', 'Вода', 'Сок', 'Молоко', 'Чай', 'Вода', 'Water = вода',
+             'Essential', 1),
+            ('A1', 'grammar', 'They ___ students.', 'am', 'is', 'are', 'be', 'are', 'They are', 'Plural', 1),
+            ('A1', 'grammar', 'My name ___ John.', 'am', 'is', 'are', 'be', 'is', 'Name is', 'Third person', 1),
+            ('A1', 'vocabulary', 'What is "dog" in Russian?', 'Собака', 'Кошка', 'Птица', 'Рыба', 'Собака',
+             'Dog = собака', 'Pet', 1),
+            ('A1', 'grammar', 'I ___ from London.', 'am', 'is', 'are', 'be', 'am', 'I am from', 'First person', 1),
+            ('A1', 'vocabulary', 'What is "table" in Russian?', 'Стол', 'Стул', 'Кровать', 'Шкаф', 'Стол',
+             'Table = стол', 'Furniture', 1),
+            ('A1', 'grammar', 'It ___ a cat.', 'am', 'is', 'are', 'be', 'is', 'It is', 'Neutral', 1),
+            ('A1', 'vocabulary', 'What is "pen" in Russian?', 'Ручка', 'Карандаш', 'Линейка', 'Ластик', 'Ручка',
+             'Pen = ручка', 'Writing', 1),
+            ('A1', 'grammar', 'You ___ welcome.', 'am', 'is', 'are', 'be', 'are', 'You are', 'Second person', 1),
+            ('A1', 'vocabulary', 'What is "school" in Russian?', 'Школа', 'Университет', 'Библиотека', 'Больница',
+             'Школа', 'School = школа', 'Education', 1),
+            ('A1', 'grammar', 'The sky ___ blue.', 'am', 'is', 'are', 'be', 'is', 'Sky is', 'Third person', 1),
+            ('A1', 'vocabulary', 'What is "computer" in Russian?', 'Компьютер', 'Телефон', 'Телевизор', 'Холодильник',
+             'Компьютер', 'Computer = компьютер', 'Technology', 1),
+            ('A1', 'grammar', 'I ___ 20 years old.', 'am', 'is', 'are', 'be', 'am', 'I am', 'Age', 1),
+            ('A1', 'vocabulary', 'What is "mother" in Russian?', 'Мама', 'Папа', 'Сестра', 'Брат', 'Мама',
+             'Mother = мама', 'Family', 1),
+            ('A1', 'grammar', 'She ___ my sister.', 'am', 'is', 'are', 'be', 'is', 'She is', 'Family relation', 1),
+            ('A1', 'vocabulary', 'What is "car" in Russian?', 'Машина', 'Автобус', 'Поезд', 'Самолет', 'Машина',
+             'Car = машина', 'Transport', 1),
+            ('A1', 'grammar', 'We ___ at home.', 'am', 'is', 'are', 'be', 'are', 'We are', 'Location', 1),
+            ('A1', 'vocabulary', 'What is "friend" in Russian?', 'Друг', 'Враг', 'Коллега', 'Знакомый', 'Друг',
+             'Friend = друг', 'Relationships', 1),
+            ('A1', 'grammar', 'He ___ a doctor.', 'am', 'is', 'are', 'be', 'is', 'He is', 'Profession', 1),
+            ('A1', 'vocabulary', 'What is "city" in Russian?', 'Город', 'Деревня', 'Страна', 'Улица', 'Город',
+             'City = город', 'Geography', 1),
+            ('A1', 'grammar', 'They ___ here.', 'am', 'is', 'are', 'be', 'are', 'They are', 'Location', 1),
+            ('A1', 'vocabulary', 'What is "time" in Russian?', 'Время', 'Место', 'Деньги', 'Работа', 'Время',
+             'Time = время', 'Concepts', 1),
+            ('A1', 'grammar', 'I ___ hungry.', 'am', 'is', 'are', 'be', 'am', 'I am', 'Feeling', 1),
+            ('A1', 'vocabulary', 'What is "money" in Russian?', 'Деньги', 'Время', 'Здоровье', 'Удача', 'Деньги',
+             'Money = деньги', 'Finance', 1),
+            ('A1', 'grammar', 'She ___ beautiful.', 'am', 'is', 'are', 'be', 'is', 'She is', 'Description', 1),
+            ('A1', 'vocabulary', 'What is "work" in Russian?', 'Работа', 'Учеба', 'Отдых', 'Хобби', 'Работа',
+             'Work = работа', 'Activity', 1),
+            ('A1', 'grammar', 'You ___ right.', 'am', 'is', 'are', 'be', 'are', 'You are', 'Agreement', 1),
+            ('A1', 'vocabulary', 'What is "day" in Russian?', 'День', 'Ночь', 'Утро', 'Вечер', 'День', 'Day = день',
+             'Time', 1),
+            ('A1', 'grammar', 'It ___ cold.', 'am', 'is', 'are', 'be', 'is', 'It is', 'Weather', 1),
+            ('A1', 'vocabulary', 'What is "night" in Russian?', 'Ночь', 'День', 'Утро', 'Полдень', 'Ночь',
+             'Night = ночь', 'Time', 1),
+            ('A1', 'grammar', 'We ___ ready.', 'am', 'is', 'are', 'be', 'are', 'We are', 'State', 1),
+            ('A1', 'vocabulary', 'What is "year" in Russian?', 'Год', 'Месяц', 'Неделя', 'День', 'Год', 'Year = год',
+             'Time', 1),
+            ('A1', 'grammar', 'He ___ tall.', 'am', 'is', 'are', 'be', 'is', 'He is', 'Description', 1),
+            ('A1', 'vocabulary', 'What is "month" in Russian?', 'Месяц', 'Год', 'Неделя', 'День', 'Месяц',
+             'Month = месяц', 'Time', 1),
+            ('A1', 'grammar', 'They ___ busy.', 'am', 'is', 'are', 'be', 'are', 'They are', 'State', 1),
+            ('A1', 'vocabulary', 'What is "week" in Russian?', 'Неделя', 'Месяц', 'Год', 'День', 'Неделя',
+             'Week = неделя', 'Time', 1),
+            ('A1', 'grammar', 'I ___ sorry.', 'am', 'is', 'are', 'be', 'am', 'I am', 'Apology', 1),
+            ('A1', 'vocabulary', 'What is "hour" in Russian?', 'Час', 'Минута', 'Секунда', 'Время', 'Час', 'Hour = час',
+             'Time', 1),
+            ('A1', 'grammar', 'She ___ late.', 'am', 'is', 'are', 'be', 'is', 'She is', 'Time', 1),
+            ('A1', 'vocabulary', 'What is "minute" in Russian?', 'Минута', 'Час', 'Секунда', 'День', 'Минута',
+             'Minute = минута', 'Time', 1),
+            ('A1', 'grammar', 'You ___ early.', 'am', 'is', 'are', 'be', 'are', 'You are', 'Time', 1),
+            ('A1', 'vocabulary', 'What is "second" in Russian?', 'Секунда', 'Минута', 'Час', 'Время', 'Секунда',
+             'Second = секунда', 'Time', 1),
+        ]
+        sample_questions.extend(a1_questions)
+
+        # A2 вопросы
+        a2_questions = [
+            ('A2', 'grammar', 'They ___ watching TV now.', 'is', 'am', 'are', 'be', 'are', 'They are watching',
+             'Present Continuous', 2),
+            ('A2', 'vocabulary', 'Opposite of "big"?', 'Small', 'Large', 'Huge', 'Giant', 'Small', 'Small ≠ big',
+             'Antonyms', 2),
+            ('A2', 'grammar', 'I ___ to school every day.', 'go', 'goes', 'going', 'went', 'go', 'I go',
+             'Present Simple', 2),
+            ('A2', 'translation', 'How do you say "быстрый" in English?', 'Fast', 'Slow', 'Quickly', 'Rapid', 'Fast',
+             'Fast = быстрый', 'Adjectives', 2),
+            ('A2', 'grammar', 'She usually ___ coffee in the morning.', 'drink', 'drinks', 'drinking', 'drank',
+             'drinks', 'She drinks', 'Third person s', 2),
+            ('A2', 'grammar', 'I ___ reading a book.', 'am', 'is', 'are', 'be', 'am', 'I am reading',
+             'Present Continuous', 2),
+            ('A2', 'grammar', 'We ___ playing football.', 'am', 'is', 'are', 'be', 'are', 'We are playing',
+             'Present Continuous', 2),
+            ('A2', 'grammar', 'He ___ running fast.', 'am', 'is', 'are', 'be', 'is', 'He is running',
+             'Present Continuous', 2),
+            ('A2', 'vocabulary', 'What is the opposite of "hot"?', 'Cold', 'Warm', 'Cool', 'Freezing', 'Cold',
+             'Cold ≠ hot', 'Temperature', 2),
+            ('A2', 'grammar', 'I have ___ apple.', 'a', 'an', 'the', 'some', 'an', 'an before vowel', 'Articles', 2),
+            ('A2', 'grammar', 'She ___ to music now.', 'listen', 'listens', 'listening', 'is listening', 'is listening',
+             'Present Continuous', 'Now', 2),
+            ('A2', 'vocabulary', 'What is the opposite of "day"?', 'Night', 'Morning', 'Evening', 'Afternoon', 'Night',
+             'Night ≠ day', 'Time', 2),
+            ('A2', 'grammar', 'They ___ dinner at 7 pm.', 'have', 'has', 'having', 'had', 'have', 'They have',
+             'Present Simple', 2),
+            ('A2', 'grammar', 'I ___ like coffee.', 'doesn\'t', 'don\'t', 'isn\'t', 'aren\'t', 'don\'t',
+             'I don\'t like', 'Negation', 2),
+            ('A2', 'vocabulary', 'What is "interesting" in Russian?', 'Интересный', 'Скучный', 'Сложный', 'Простой',
+             'Интересный', 'Interesting = интересный', 'Adjectives', 2),
+            ('A2', 'grammar', 'She ___ speak French.', 'can', 'could', 'should', 'would', 'can', 'She can',
+             'Modal verbs', 2),
+            ('A2', 'grammar', 'We ___ to the cinema yesterday.', 'go', 'went', 'going', 'gone', 'went', 'We went',
+             'Past Simple', 2),
+            ('A2', 'vocabulary', 'What is the opposite of "young"?', 'Old', 'New', 'Small', 'Big', 'Old', 'Old ≠ young',
+             'Age', 2),
+            ('A2', 'grammar', 'I ___ my homework every day.', 'do', 'does', 'doing', 'did', 'do', 'I do',
+             'Present Simple', 2),
+            ('A2', 'grammar', 'He ___ basketball well.', 'play', 'plays', 'playing', 'played', 'plays', 'He plays',
+             'Third person s', 2),
+            ('A2', 'grammar', 'They ___ English lessons.', 'have', 'has', 'having', 'had', 'have', 'They have',
+             'Present Simple', 2),
+            ('A2', 'vocabulary', 'What is "difficult" in Russian?', 'Сложный', 'Легкий', 'Интересный', 'Скучный',
+             'Сложный', 'Difficult = сложный', 'Adjectives', 2),
+            ('A2', 'grammar', 'I ___ want to go.', 'doesn\'t', 'don\'t', 'isn\'t', 'aren\'t', 'don\'t', 'I don\'t want',
+             'Negation', 2),
+            ('A2', 'vocabulary', 'What is the opposite of "good"?', 'Bad', 'Better', 'Best', 'Nice', 'Bad',
+             'Bad ≠ good', 'Antonyms', 2),
+            ('A2', 'grammar', 'She ___ breakfast at 8 am.', 'eat', 'eats', 'eating', 'ate', 'eats', 'She eats',
+             'Third person s', 2),
+            ('A2', 'grammar', 'We ___ swimming on weekends.', 'go', 'goes', 'going', 'went', 'go', 'We go',
+             'Present Simple', 2),
+            ('A2', 'vocabulary', 'What is "expensive" in Russian?', 'Дорогой', 'Дешевый', 'Красивый', 'Современный',
+             'Дорогой', 'Expensive = дорогой', 'Adjectives', 2),
+            ('A2', 'grammar', 'He ___ drive a car.', 'can', 'could', 'should', 'would', 'can', 'He can', 'Ability', 2),
+            ('A2', 'grammar', 'They ___ their grandparents last week.', 'visit', 'visited', 'visiting', 'visits',
+             'visited', 'They visited', 'Past Simple', 2),
+            ('A2', 'vocabulary', 'What is the opposite of "rich"?', 'Poor', 'Wealthy', 'Happy', 'Sad', 'Poor',
+             'Poor ≠ rich', 'Antonyms', 2),
+            ('A2', 'grammar', 'I ___ understand you.', 'doesn\'t', 'don\'t', 'isn\'t', 'aren\'t', 'don\'t',
+             'I don\'t understand', 'Negation', 2),
+            ('A2', 'vocabulary', 'What is "beautiful" in Russian?', 'Красивый', 'Страшный', 'Большой', 'Маленький',
+             'Красивый', 'Beautiful = красивый', 'Adjectives', 2),
+            ('A2', 'grammar', 'She ___ a letter now.', 'write', 'writes', 'writing', 'is writing', 'is writing',
+             'Present Continuous', 'Now', 2),
+            ('A2', 'grammar', 'We ___ lunch together.', 'have', 'has', 'having', 'had', 'have', 'We have',
+             'Present Simple', 2),
+            ('A2', 'vocabulary', 'What is the opposite of "happy"?', 'Sad', 'Glad', 'Joyful', 'Excited', 'Sad',
+             'Sad ≠ happy', 'Emotions', 2),
+            ('A2', 'grammar', 'He ___ his room every Saturday.', 'clean', 'cleans', 'cleaning', 'cleaned', 'cleans',
+             'He cleans', 'Third person s', 2),
+            ('A2', 'grammar', 'They ___ in London last year.', 'live', 'lived', 'living', 'lives', 'lived',
+             'They lived', 'Past Simple', 2),
+            ('A2', 'vocabulary', 'What is "important" in Russian?', 'Важный', 'Неважный', 'Интересный', 'Скучный',
+             'Важный', 'Important = важный', 'Adjectives', 2),
+            ('A2', 'grammar', 'I ___ usually tired in the evening.', 'am', 'is', 'are', 'be', 'am', 'I am', 'Feeling',
+             2),
+            ('A2', 'vocabulary', 'What is the opposite of "begin"?', 'Finish', 'Start', 'Continue', 'Stop', 'Finish',
+             'Finish ≠ begin', 'Verbs', 2),
+            ('A2', 'grammar', 'She ___ shopping every Friday.', 'go', 'goes', 'going', 'went', 'goes', 'She goes',
+             'Third person s', 2),
+            ('A2', 'grammar', 'We ___ a new car last month.', 'buy', 'bought', 'buying', 'buys', 'bought', 'We bought',
+             'Past Simple', 2),
+            ('A2', 'vocabulary', 'What is "dangerous" in Russian?', 'Опасный', 'Безопасный', 'Интересный', 'Скучный',
+             'Опасный', 'Dangerous = опасный', 'Adjectives', 2),
+            ('A2', 'grammar', 'He ___ to work by bus.', 'go', 'goes', 'going', 'went', 'goes', 'He goes',
+             'Third person s', 2),
+            ('A2', 'grammar', 'They ___ to the beach yesterday.', 'go', 'went', 'going', 'gone', 'went', 'They went',
+             'Past Simple', 2),
+            ('A2', 'vocabulary', 'What is the opposite of "open"?', 'Close', 'Start', 'Begin', 'Enter', 'Close',
+             'Close ≠ open', 'Verbs', 2),
+            ('A2', 'grammar', 'I ___ a shower every morning.', 'take', 'takes', 'taking', 'took', 'take', 'I take',
+             'Present Simple', 2),
+            ('A2', 'grammar', 'She ___ her phone at home.', 'leave', 'left', 'leaving', 'leaves', 'left', 'She left',
+             'Past Simple', 2),
+            ('A2', 'vocabulary', 'What is "possible" in Russian?', 'Возможный', 'Невозможный', 'Интересный', 'Скучный',
+             'Возможный', 'Possible = возможный', 'Adjectives', 2),
+            ('A2', 'grammar', 'We ___ our friends tomorrow.', 'meet', 'meets', 'meeting', 'will meet', 'will meet',
+             'We will meet', 'Future', 2),
+        ]
+        sample_questions.extend(a2_questions)
+
+        # B1 вопросы
+        b1_questions = [
+            ('B1', 'grammar', 'If I ___ you, I would study more.', 'was', 'were', 'am', 'is', 'were',
+             'Second conditional', 'Conditional', 3),
+            ('B1', 'grammar', 'She has ___ to London.', 'been', 'gone', 'went', 'go', 'been', 'Has been',
+             'Present Perfect', 3),
+            ('B1', 'grammar', 'I ___ my keys yesterday.', 'lose', 'lost', 'losed', 'losing', 'lost', 'Past simple',
+             'Irregular verbs', 3),
+            ('B1', 'grammar', 'He ___ already eaten.', 'has', 'have', 'had', 'having', 'has', 'Has eaten',
+             'Present Perfect', 3),
+            ('B1', 'grammar', 'We ___ for 2 hours.', 'have waited', 'has waited', 'waiting', 'waited', 'have waited',
+             'Have waited', 'Duration', 3),
+            ('B1', 'grammar', 'By next year, I ___ English for 5 years.', 'will study', 'will have studied', 'studied',
+             'study', 'will have studied', 'Future Perfect', 'Tenses', 3),
+            ('B1', 'grammar', 'If it rains, we ___ cancel the picnic.', 'will', 'would', 'shall', 'should', 'will',
+             'First conditional', 'Conditional', 3),
+            ('B1', 'grammar', 'She wishes she ___ taller.', 'was', 'were', 'is', 'be', 'were', 'Wishes', 'Subjunctive',
+             3),
+            ('B1', 'grammar', 'I\'m used to ___ early.', 'wake up', 'waking up', 'woke up', 'woken up', 'waking up',
+             'Used to + ing', 'Gerund', 3),
+            ('B1', 'grammar', 'He ___ rather stay home.', 'would', 'will', 'shall', 'should', 'would', 'Would rather',
+             'Preferences', 3),
+            ('B1', 'grammar', 'The movie was ___ than I expected.', 'interesting', 'more interesting',
+             'most interesting', 'interestinger', 'more interesting', 'Comparative', 'Adjectives', 3),
+            ('B1', 'grammar', 'I ___ a car since 2010.', 'have had', 'had', 'have', 'has', 'have had',
+             'Present Perfect', 'Duration', 3),
+            ('B1', 'grammar', 'She ___ be here by now.', 'should', 'would', 'could', 'might', 'should',
+             'Should for expectation', 'Modal verbs', 3),
+            ('B1', 'grammar', 'If I had known, I ___ come.', 'would have', 'will have', 'would', 'will', 'would have',
+             'Third conditional', 'Conditional', 3),
+            ('B1', 'grammar', 'He asked me where ___ .', 'I live', 'do I live', 'did I live', 'I lived', 'I lived',
+             'Reported speech', 'Indirect questions', 3),
+            ('B1', 'grammar', 'By the time we arrived, they ___ .', 'had left', 'left', 'have left', 'leave',
+             'had left', 'Past Perfect', 'Tenses', 3),
+            ('B1', 'grammar', 'I look forward to ___ you.', 'see', 'seeing', 'saw', 'seen', 'seeing',
+             'Look forward to + ing', 'Gerund', 3),
+            ('B1', 'grammar', 'She\'s the woman ___ helped me.', 'which', 'who', 'whom', 'whose', 'who',
+             'Relative clause', 'Pronouns', 3),
+            ('B1', 'grammar', 'I wish I ___ more time.', 'have', 'had', 'has', 'having', 'had', 'Wishes', 'Subjunctive',
+             3),
+            ('B1', 'grammar', 'It\'s time we ___ .', 'leave', 'left', 'leaving', 'have left', 'left', 'It\'s time',
+             'Subjunctive', 3),
+            ('B1', 'grammar', 'I\'d rather you ___ that.', 'don\'t do', 'didn\'t do', 'won\'t do', 'not do',
+             'didn\'t do', 'Would rather', 'Preferences', 3),
+            ('B1', 'grammar', 'This is ___ book I\'ve ever read.', 'good', 'better', 'the best', 'best', 'the best',
+             'Superlative', 'Adjectives', 3),
+            ('B1', 'grammar', 'He ___ if he had more time.', 'will help', 'would help', 'helps', 'helped', 'would help',
+             'Second conditional', 'Conditional', 3),
+            ('B1', 'grammar', 'She\'s used to ___ in the city.', 'live', 'lives', 'living', 'lived', 'living',
+             'Used to + ing', 'Gerund', 3),
+            ('B1', 'grammar', 'I ___ you if I need help.', 'will call', 'would call', 'called', 'call', 'will call',
+             'First conditional', 'Conditional', 3),
+            ('B1', 'grammar', 'He suggested ___ to the cinema.', 'go', 'going', 'to go', 'went', 'going',
+             'Suggest + ing', 'Gerund', 3),
+            ('B1', 'grammar', 'If I were you, I ___ that.', 'won\'t do', 'wouldn\'t do', 'didn\'t do', 'don\'t do',
+             'wouldn\'t do', 'Second conditional', 'Conditional', 3),
+            ('B1', 'grammar', 'She ___ have told me earlier.', 'should', 'would', 'could', 'might', 'should',
+             'Should for advice', 'Modal verbs', 3),
+            ('B1', 'grammar', 'I regret ___ you.', 'tell', 'telling', 'to tell', 'told', 'telling', 'Regret + ing',
+             'Gerund', 3),
+            ('B1', 'grammar', 'He denied ___ the money.', 'take', 'taking', 'took', 'taken', 'taking', 'Deny + ing',
+             'Gerund', 3),
+            ('B1', 'grammar', 'I\'ll call you when I ___ home.', 'get', 'will get', 'got', 'getting', 'get',
+             'Time clause', 'Tenses', 3),
+            ('B1', 'grammar', 'She ___ the report by tomorrow.', 'finish', 'will finish', 'finishes',
+             'will have finished', 'will have finished', 'Future Perfect', 'Tenses', 3),
+            ('B1', 'grammar', 'If he ___ harder, he would pass.', 'studies', 'studied', 'study', 'will study',
+             'studied', 'Second conditional', 'Conditional', 3),
+            ('B1', 'grammar', 'I can\'t help ___ about it.', 'think', 'thinking', 'to think', 'thought', 'thinking',
+             'Can\'t help + ing', 'Gerund', 3),
+            ('B1', 'grammar', 'He admitted ___ wrong.', 'be', 'being', 'to be', 'been', 'being', 'Admit + ing',
+             'Gerund', 3),
+            ('B1', 'grammar', 'She avoided ___ him.', 'meet', 'meeting', 'to meet', 'met', 'meeting', 'Avoid + ing',
+             'Gerund', 3),
+            ('B1', 'grammar', 'I\'m considering ___ a new job.', 'look for', 'looking for', 'to look for', 'looked for',
+             'looking for', 'Consider + ing', 'Gerund', 3),
+            ('B1', 'grammar', 'He delayed ___ a decision.', 'make', 'making', 'to make', 'made', 'making',
+             'Delay + ing', 'Gerund', 3),
+            ('B1', 'grammar', 'She enjoys ___ novels.', 'read', 'reading', 'to read', 'reads', 'reading', 'Enjoy + ing',
+             'Gerund', 3),
+            ('B1', 'grammar', 'He finished ___ the report.', 'write', 'writing', 'to write', 'wrote', 'writing',
+             'Finish + ing', 'Gerund', 3),
+            ('B1', 'grammar', 'I imagine ___ there.', 'live', 'living', 'to live', 'lived', 'living', 'Imagine + ing',
+             'Gerund', 3),
+            ('B1', 'grammar', 'She mentioned ___ him before.', 'meet', 'meeting', 'to meet', 'met', 'meeting',
+             'Mention + ing', 'Gerund', 3),
+            ('B1', 'grammar', 'He missed ___ the train.', 'catch', 'catching', 'to catch', 'caught', 'catching',
+             'Miss + ing', 'Gerund', 3),
+            ('B1', 'grammar', 'I practice ___ English every day.', 'speak', 'speaking', 'to speak', 'spoke', 'speaking',
+             'Practice + ing', 'Gerund', 3),
+            ('B1', 'grammar', 'She quit ___ last year.', 'smoke', 'smoking', 'to smoke', 'smoked', 'smoking',
+             'Quit + ing', 'Gerund', 3),
+            ('B1', 'grammar', 'He recalled ___ her somewhere.', 'see', 'seeing', 'to see', 'saw', 'seeing',
+             'Recall + ing', 'Gerund', 3),
+            ('B1', 'grammar', 'I recommend ___ early.', 'book', 'booking', 'to book', 'booked', 'booking',
+             'Recommend + ing', 'Gerund', 3),
+            ('B1', 'grammar', 'She resented ___ treated unfairly.', 'be', 'being', 'to be', 'been', 'being',
+             'Resent + ing', 'Gerund', 3),
+            ('B1', 'grammar', 'He risked ___ his job.', 'lose', 'losing', 'to lose', 'lost', 'losing', 'Risk + ing',
+             'Gerund', 3),
+            ('B1', 'grammar', 'I suggest ___ a break.', 'take', 'taking', 'to take', 'took', 'taking', 'Suggest + ing',
+             'Gerund', 3),
+        ]
+        sample_questions.extend(b1_questions)
+
+        # B2 вопросы
+        b2_questions = [
+            ('B2', 'grammar', 'Had I known, I ___ helped.', 'would have', 'will have', 'would', 'will', 'would have',
+             'Third conditional', 'Inversion', 4),
+            ('B2', 'grammar', 'The report ___ by tomorrow.', 'will finish', 'will be finished', 'finishes', 'finished',
+             'will be finished', 'Future Passive', 'Passive voice', 4),
+            ('B2', 'grammar', 'I object ___ treated like a child.', 'to be', 'to being', 'being', 'be', 'to being',
+             'Object to + ing', 'Gerund', 4),
+            ('B2', 'grammar', 'Not only ___ late, but he also forgot the documents.', 'he was', 'was he', 'did he',
+             'he did', 'was he', 'Inversion', 'Sentence structure', 4),
+            ('B2', 'grammar', 'Had I ___ sooner, I could have prevented it.', 'act', 'acted', 'acting', 'action',
+             'acted', 'Past Perfect', 'Conditional', 4),
+            ('B2', 'grammar', 'I\'d rather you ___ here.', 'stay', 'stayed', 'staying', 'to stay', 'stayed',
+             'Would rather', 'Subjunctive', 4),
+            ('B2', 'grammar', 'It\'s high time we ___ a decision.', 'make', 'made', 'making', 'to make', 'made',
+             'It\'s high time', 'Subjunctive', 4),
+            ('B2', 'grammar', 'But for your help, I ___ succeeded.', 'wouldn\'t have', 'won\'t have', 'didn\'t have',
+             'haven\'t', 'wouldn\'t have', 'But for', 'Conditional', 4),
+            ('B2', 'grammar', '___ I you, I\'d accept the offer.', 'Was', 'Were', 'Am', 'Be', 'Were', 'Were I you',
+             'Formal conditional', 4),
+            ('B2', 'grammar', 'Little ___ she know what was coming.', 'did', 'does', 'do', 'has', 'did', 'Little did',
+             'Inversion', 4),
+            ('B2', 'grammar', 'Hardly ___ I arrived when it started raining.', 'had', 'have', 'did', 'was', 'had',
+             'Hardly had', 'Inversion', 4),
+            ('B2', 'grammar', 'No sooner ___ he left than the phone rang.', 'had', 'has', 'did', 'was', 'had',
+             'No sooner had', 'Inversion', 4),
+            ('B2', 'grammar', 'Under no circumstances ___ allowed.', 'smoking is', 'is smoking', 'smoking', 'smoke',
+             'is smoking', 'Under no circumstances', 'Inversion', 4),
+            ('B2', 'grammar', 'Only by working hard ___ succeed.', 'you can', 'can you', 'you will', 'will you',
+             'can you', 'Only by', 'Inversion', 4),
+            ('B2', 'grammar', 'Such ___ the situation that we had to act.', 'was', 'were', 'is', 'are', 'was',
+             'Such was', 'Inversion', 4),
+            ('B2', 'grammar', 'Never before ___ such beauty.', 'I saw', 'saw I', 'have I seen', 'I have seen',
+             'have I seen', 'Never before', 'Inversion', 4),
+            ('B2', 'grammar', 'Rarely ___ so disappointed.', 'have I been', 'I have been', 'was I', 'I was',
+             'have I been', 'Rarely', 'Inversion', 4),
+            ('B2', 'grammar', 'Not until later ___ realize the truth.', 'did I', 'I did', 'I', 'me', 'did I',
+             'Not until', 'Inversion', 4),
+            ('B2', 'grammar', 'So difficult ___ that few could solve it.', 'was the problem', 'the problem was',
+             'were the problem', 'the problem were', 'was the problem', 'So difficult', 'Inversion', 4),
+            ('B2', 'grammar', 'Only then ___ understand.', 'did I', 'I did', 'I', 'me', 'did I', 'Only then',
+             'Inversion', 4),
+            ('B2', 'grammar', 'Were I ___ time, I would help.', 'have', 'had', 'has', 'having', 'had', 'Were I',
+             'Formal conditional', 4),
+            ('B2', 'grammar', 'Should you ___ any problems, call me.', 'have', 'had', 'has', 'having', 'have',
+             'Should you', 'Formal conditional', 4),
+            ('B2', 'grammar', 'Had they ___ earlier, they would have caught the train.', 'left', 'leave', 'leaving',
+             'leaves', 'left', 'Had they', 'Conditional perfect', 4),
+            ('B2', 'grammar', 'Not for one moment ___ I believe him.', 'did', 'do', 'does', 'have', 'did',
+             'Not for one moment', 'Inversion', 4),
+            ('B2', 'grammar', 'At no time ___ aware of the danger.', 'was he', 'he was', 'were he', 'he were', 'was he',
+             'At no time', 'Inversion', 4),
+            ('B2', 'grammar', 'In no way ___ responsible.', 'is he', 'he is', 'are he', 'he are', 'he is', 'In no way',
+             'Inversion', 4),
+            ('B2', 'grammar', 'On no account ___ this door.', 'open you', 'you open', 'open', 'do you open',
+             'do you open', 'On no account', 'Inversion', 4),
+            ('B2', 'grammar', 'By no means ___ the best solution.', 'is this', 'this is', 'are this', 'this are',
+             'this is', 'By no means', 'Inversion', 4),
+            ('B2', 'grammar', 'Not a word ___ during the meeting.', 'did he say', 'he said', 'said he', 'he did say',
+             'he said', 'Not a word', 'Inversion', 4),
+            ('B2', 'grammar', 'Scarcely ___ when the phone rang.', 'had he arrived', 'he had arrived', 'arrived he',
+             'he arrived', 'he had arrived', 'Scarcely', 'Inversion', 4),
+            ('B2', 'grammar', 'Barely ___ when the storm started.', 'had we left', 'we had left', 'left we', 'we left',
+             'we had left', 'Barely', 'Inversion', 4),
+            ('B2', 'grammar', 'No way ___ that!', 'am I doing', 'I am doing', 'do I do', 'I do', 'I am doing', 'No way',
+             'Inversion', 4),
+            ('B2', 'grammar', 'In vain ___ to convince him.', 'did we try', 'we tried', 'tried we', 'we did try',
+             'we tried', 'In vain', 'Inversion', 4),
+            ('B2', 'grammar', 'Not once ___ consider our proposal.', 'did they', 'they did', 'they', 'them', 'they did',
+             'Not once', 'Inversion', 4),
+            ('B2', 'grammar', 'Only after months ___ the truth.', 'did we learn', 'we learned', 'learned we',
+             'we did learn', 'we learned', 'Only after', 'Inversion', 4),
+            ('B2', 'grammar', 'Only when it\'s too late ___ appreciate what we had.', 'do we', 'we do', 'we', 'us',
+             'we do', 'Only when', 'Inversion', 4),
+            ('B2', 'grammar', 'Only by chance ___ the mistake.', 'did we discover', 'we discovered', 'discovered we',
+             'we did discover', 'we discovered', 'Only by chance', 'Inversion', 4),
+            ('B2', 'grammar', 'Only through hard work ___ success.', 'can you achieve', 'you can achieve',
+             'achieve you', 'you achieve', 'you can achieve', 'Only through', 'Inversion', 4),
+            ('B2', 'grammar', 'Not only intelligent but also ___ .', 'hardworking is he', 'he is hardworking',
+             'is he hardworking', 'hardworking he is', 'he is hardworking', 'Not only... but also',
+             'Parallel structure', 4),
+            ('B2', 'grammar', 'Neither the manager nor the employees ___ satisfied.', 'is', 'are', 'was', 'were', 'are',
+             'Neither... nor', 'Subject-verb agreement', 4),
+            ('B2', 'grammar', 'Either you or I ___ mistaken.', 'am', 'are', 'is', 'were', 'am', 'Either... or',
+             'Subject-verb agreement', 4),
+            ('B2', 'grammar', 'Not just the students but also the teacher ___ present.', 'was', 'were', 'are', 'is',
+             'was', 'Not just... but also', 'Subject-verb agreement', 4),
+            ('B2', 'grammar', 'Both the book and the movie ___ interesting.', 'is', 'are', 'was', 'were', 'are',
+             'Both... and', 'Subject-verb agreement', 4),
+            ('B2', 'grammar', 'No sooner said than ___ .', 'done', 'did', 'do', 'doing', 'done', 'No sooner... than',
+             'Fixed expression', 4),
+            ('B2', 'grammar', 'The more you practice, ___ you become.', 'better', 'the better', 'good', 'the good',
+             'the better', 'The more... the better', 'Comparative', 4),
+            ('B2', 'grammar', 'So quickly ___ that nobody noticed.', 'did he leave', 'he left', 'left he',
+             'he did leave', 'he left', 'So quickly', 'Inversion', 4),
+            ('B2', 'grammar', 'To such an extent ___ that we had to stop.', 'did he complain', 'he complained',
+             'complained he', 'he did complain', 'he complained', 'To such an extent', 'Inversion', 4),
+            ('B2', 'grammar', 'With no difficulty ___ the test.', 'did he pass', 'he passed', 'passed he',
+             'he did pass', 'he passed', 'With no difficulty', 'Inversion', 4),
+            ('B2', 'grammar', 'On no occasion ___ late.', 'has he been', 'he has been', 'been he', 'he been',
+             'he has been', 'On no occasion', 'Inversion', 4),
+            ('B2', 'grammar', 'Under no condition ___ this information.', 'should you share', 'you should share',
+             'share you', 'you share', 'you should share', 'Under no condition', 'Inversion', 4),
+        ]
+        sample_questions.extend(b2_questions)
+
+        # C1 вопросы
+        c1_questions = [
+            ('C1', 'grammar', '___ had he arrived than the phone rang.', 'No sooner', 'Hardly', 'Scarcely', 'Barely',
+             'No sooner', 'No sooner... than', 'Inversion', 5),
+            ('C1', 'grammar', 'Such ___ the complexity that few understood.', 'was', 'were', 'is', 'are', 'was',
+             'Such was', 'Inversion', 5),
+            ('C1', 'grammar', 'Were the situation ___, we\'d act differently.', 'to arise', 'arising', 'arose',
+             'arisen', 'to arise', 'Were + to', 'Formal conditional', 5),
+            ('C1', 'grammar', '___ be said that honesty is the best policy.', 'It may', 'It might', 'It can',
+             'It could', 'It may', 'It may be said', 'Formal expression', 5),
+            ('C1', 'grammar', 'Not until later ___ the full implications.', 'did he realize', 'he realized',
+             'realized he', 'he did realize', 'he realized', 'Not until', 'Inversion', 5),
+            ('C1', 'grammar', 'So compelling ___ that everyone listened.', 'was the argument', 'the argument was',
+             'were the argument', 'the argument were', 'the argument was', 'So compelling', 'Inversion', 5),
+            ('C1', 'grammar', 'Had it not been for the warning, disaster ___.', 'would have struck', 'will strike',
+             'struck', 'strikes', 'would have struck', 'Had it not been', 'Conditional', 5),
+            ('C1', 'grammar', 'Rarely ___ such dedication.', 'does one encounter', 'one encounters', 'encounters one',
+             'one does encounter', 'one encounters', 'Rarely', 'Inversion', 5),
+            ('C1', 'grammar', 'Under no circumstances ___ the deadline.', 'can we extend', 'we can extend',
+             'extend we can', 'can extend we', 'we can extend', 'Under no circumstances', 'Inversion', 5),
+            ('C1', 'grammar', 'Only by working together ___ solve this.', 'can we', 'we can', 'we will', 'will we',
+             'we can', 'Only by', 'Inversion', 5),
+            ('C1', 'grammar', 'Little ___ he suspect the truth.', 'did', 'does', 'do', 'has', 'did', 'Little did',
+             'Inversion', 5),
+            ('C1', 'grammar', 'So intense ___ that it became unbearable.', 'was the pressure', 'the pressure was',
+             'were the pressure', 'the pressure were', 'the pressure was', 'So intense', 'Inversion', 5),
+            ('C1', 'grammar', 'Never ___ such incompetence.', 'had I witnessed', 'I had witnessed', 'witnessed I',
+             'I witnessed', 'I had witnessed', 'Never had', 'Inversion', 5),
+            ('C1', 'grammar', 'Not for all the money in the world ___ that.', 'would I do', 'I would do', 'I do',
+             'do I', 'I would do', 'Not for', 'Inversion', 5),
+            ('C1', 'grammar', 'Only when it\'s too late ___ appreciate what we had.', 'do we', 'we do', 'we', 'us',
+             'we do', 'Only when', 'Inversion', 5),
+            ('C1', 'grammar', 'So convincing ___ that nobody doubted him.', 'was his story', 'his story was',
+             'were his story', 'his story were', 'his story was', 'So convincing', 'Inversion', 5),
+            ('C1', 'grammar', 'At no time ___ aware of the danger.', 'was he', 'he was', 'were he', 'he were', 'he was',
+             'At no time', 'Inversion', 5),
+            ('C1', 'grammar', 'Not once ___ consider the consequences.', 'did he', 'he did', 'he', 'him', 'he did',
+             'Not once', 'Inversion', 5),
+            ('C1', 'grammar', 'Only after years of study ___ master the technique.', 'did he', 'he did', 'he', 'him',
+             'he did', 'Only after', 'Inversion', 5),
+            ('C1', 'grammar', 'Such ___ his determination that failure was impossible.', 'was', 'were', 'is', 'are',
+             'was', 'Such was', 'Inversion', 5),
+            ('C1', 'grammar', 'Had I ___ to, I would have objected.', 'wanted', 'want', 'wants', 'wanting', 'wanted',
+             'Had I wanted', 'Conditional perfect', 5),
+            ('C1', 'grammar', 'Were he ___ , he would understand.', 'to know', 'know', 'knows', 'knowing', 'to know',
+             'Were he to know', 'Formal conditional', 5),
+            ('C1', 'grammar', 'Should there ___ any problems, contact us.', 'be', 'is', 'are', 'were', 'be',
+             'Should there be', 'Formal conditional', 5),
+            ('C1', 'grammar', 'Had the weather ___ better, we would have gone.', 'been', 'be', 'was', 'were', 'been',
+             'Had the weather been', 'Conditional perfect', 5),
+            ('C1', 'grammar', '___ we to succeed, it would be miraculous.', 'Were', 'Was', 'Are', 'Is', 'Were',
+             'Were we to', 'Formal conditional', 5),
+            ('C1', 'grammar', 'Not for the life of me ___ remember.', 'can I', 'I can', 'could I', 'I could', 'I can',
+             'Not for the life of me', 'Inversion', 5),
+            ('C1', 'grammar', 'In no uncertain terms ___ his disapproval.', 'did he express', 'he expressed',
+             'expressed he', 'he did express', 'he expressed', 'In no uncertain terms', 'Inversion', 5),
+            ('C1', 'grammar', 'By no stretch of the imagination ___ acceptable.', 'is this', 'this is', 'are this',
+             'this are', 'this is', 'By no stretch', 'Inversion', 5),
+            ('C1', 'grammar', 'On no account whatsoever ___ disturbed.', 'should he be', 'he should be', 'be he',
+             'he be', 'he should be', 'On no account', 'Inversion', 5),
+            ('C1', 'grammar', 'Under no circumstances whatever ___ tolerated.', 'will this be', 'this will be',
+             'be this', 'this be', 'this will be', 'Under no circumstances', 'Inversion', 5),
+            ('C1', 'grammar', 'Not a single word of apology ___ .', 'did he offer', 'he offered', 'offered he',
+             'he did offer', 'he offered', 'Not a single word', 'Inversion', 5),
+            ('C1', 'grammar', 'Scarcely a day goes by ___ I think of it.', 'that', 'when', 'which', 'where', 'that',
+             'Scarcely... that', 'Inversion', 5),
+            ('C1', 'grammar', 'Hardly anyone ___ the truth.', 'knows', 'know', 'knew', 'knowing', 'knows',
+             'Hardly anyone', 'Inversion', 5),
+            ('C1', 'grammar', 'Barely had the words ___ his lips when he regretted them.', 'left', 'leave', 'leaving',
+             'leaves', 'left', 'Barely had', 'Inversion', 5),
+            ('C1', 'grammar', 'No sooner had we ___ than the trouble started.', 'arrived', 'arrive', 'arriving',
+             'arrives', 'arrived', 'No sooner had', 'Inversion', 5),
+            ('C1', 'grammar', 'Only by a miracle ___ survived.', 'did they', 'they did', 'they', 'them', 'they did',
+             'Only by a miracle', 'Inversion', 5),
+            ('C1', 'grammar', 'Only through sheer determination ___ overcome.', 'did she', 'she did', 'she', 'her',
+             'she did', 'Only through', 'Inversion', 5),
+            ('C1', 'grammar', 'Only with great difficulty ___ persuaded.', 'was he', 'he was', 'were he', 'he were',
+             'he was', 'Only with', 'Inversion', 5),
+            ('C1', 'grammar', 'Only after much deliberation ___ a decision.', 'did we reach', 'we reached',
+             'reached we', 'we did reach', 'we reached', 'Only after', 'Inversion', 5),
+            ('C1', 'grammar', 'Only when all else fails ___ desperate measures.', 'do we resort to', 'we resort to',
+             'resort we to', 'we do resort to', 'we resort to', 'Only when', 'Inversion', 5),
+            ('C1', 'grammar', 'Not only did he fail, ___ made things worse.', 'but he also', 'also he', 'he also',
+             'but also he', 'but he also', 'Not only... but also', 'Parallel structure', 5),
+            ('C1', 'grammar', 'Neither here nor there ___ the matter.', 'is', 'are', 'was', 'were', 'is',
+             'Neither... nor', 'Subject-verb agreement', 5),
+            ('C1', 'grammar', 'Either now or never ___ chance.', 'is our', 'our is', 'are our', 'our are', 'is our',
+             'Either... or', 'Subject-verb agreement', 5),
+            ('C1', 'grammar', 'Both then and now ___ important.', 'it was', 'was it', 'it is', 'is it', 'it is',
+             'Both... and', 'Tense agreement', 5),
+            ('C1', 'grammar', 'No more no less ___ required.', 'is', 'are', 'was', 'were', 'is', 'No more no less',
+             'Subject-verb agreement', 5),
+            ('C1', 'grammar', 'The sooner the better ___ situation.', 'is the', 'the is', 'are the', 'the are',
+             'is the', 'The sooner the better', 'Fixed expression', 5),
+            ('C1', 'grammar', 'So be it ___ decided.', 'is', 'are', 'was', 'were', 'is', 'So be it', 'Fixed expression',
+             5),
+            ('C1', 'grammar', 'To cut a long story short ___ happened.', 'what', 'that', 'which', 'who', 'what',
+             'To cut a long story short', 'Fixed expression', 5),
+            ('C1', 'grammar', 'When all is said and done ___ matters.', 'what', 'that', 'which', 'who', 'what',
+             'When all is said and done', 'Fixed expression', 5),
+            ('C1', 'grammar', 'Last but not least ___ contribution.', 'his', 'him', 'he', 'himself', 'his',
+             'Last but not least', 'Fixed expression', 5),
+        ]
+        sample_questions.extend(c1_questions)
+
+        # C2 вопросы
+        c2_questions = [
+            ('C2', 'grammar', '___ he to apologize, I might reconsider.', 'Were', 'Was', 'Be', 'Being', 'Were',
+             'Were he to', 'Formal conditional', 6),
+            ('C2', 'grammar', 'So intricate ___ that it took years to decipher.', 'was the code', 'the code was',
+             'were the code', 'the code were', 'the code was', 'So intricate', 'Inversion', 6),
+            ('C2', 'grammar', 'Never before ___ such a spectacle.', 'had I witnessed', 'I had witnessed', 'witnessed I',
+             'I witnessed', 'I had witnessed', 'Never before', 'Inversion', 6),
+            ('C2', 'vocabulary', '___ the consequences, he proceeded anyway.', 'Notwithstanding', 'Despite', 'Although',
+             'Whereas', 'Notwithstanding', 'Notwithstanding', 'Formal preposition', 6),
+            ('C2', 'grammar', 'Little did they realize what ___ them.', 'awaited', 'awaiting', 'await', 'awaits',
+             'awaited', 'What awaited', 'Past simple', 6),
+            ('C2', 'grammar', 'Had I but known, ___ differently.', 'would I have acted', 'I would have acted',
+             'I acted', 'I would act', 'I would have acted', 'Had I but known', 'Conditional', 6),
+            ('C2', 'grammar', '___ they succeed remains to be seen.', 'Whether', 'If', 'That', 'What', 'Whether',
+             'Whether they succeed', 'Formal clause', 6),
+            ('C2', 'grammar', 'Such ___ his determination that failure was impossible.', 'was', 'were', 'is', 'are',
+             'was', 'Such was', 'Inversion', 6),
+            ('C2', 'vocabulary', '___ all efforts, the project failed.', 'Notwithstanding', 'Despite', 'Although',
+             'Whereas', 'Notwithstanding', 'Notwithstanding', 'Formal preposition', 6),
+            ('C2', 'grammar', 'Had circumstances ___ different, the outcome would vary.', 'been', 'be', 'being', 'are',
+             'been', 'Had circumstances been', 'Conditional', 6),
+            ('C2', 'grammar', 'So profound ___ that it changed everything.', 'was the impact', 'the impact was',
+             'were the impact', 'the impact were', 'the impact was', 'So profound', 'Inversion', 6),
+            ('C2', 'grammar', 'Never in my wildest dreams ___ imagine this.', 'could I have', 'I could have', 'I could',
+             'could I', 'I could have', 'Never', 'Inversion', 6),
+            ('C2', 'grammar', 'Only by sheer luck ___ survive.', 'did we', 'we did', 'we', 'us', 'we did', 'Only by',
+             'Inversion', 6),
+            ('C2', 'grammar', 'Not for one moment ___ doubt her.', 'did I', 'I did', 'I', 'me', 'I did',
+             'Not for one moment', 'Inversion', 6),
+            ('C2', 'grammar', 'So elaborate ___ that it seemed impossible.', 'was the plan', 'the plan was',
+             'were the plan', 'the plan were', 'the plan was', 'So elaborate', 'Inversion', 6),
+            ('C2', 'grammar', 'At no point ___ consider giving up.', 'did we', 'we did', 'we', 'us', 'we did',
+             'At no point', 'Inversion', 6),
+            ('C2', 'grammar', 'Only through perseverance ___ overcome.', 'can one', 'one can', 'one', 'ones', 'one can',
+             'Only through', 'Inversion', 6),
+            ('C2', 'grammar', 'Such ___ the mystery that it captivated all.', 'was', 'were', 'is', 'are', 'was',
+             'Such was', 'Inversion', 6),
+            ('C2', 'grammar', 'Had I the means, ___ differently.', 'would I act', 'I would act', 'I acted', 'I act',
+             'I would act', 'Had I', 'Conditional', 6),
+            ('C2', 'grammar', 'Not until the very end ___ the truth.', 'did they learn', 'they learned', 'learned they',
+             'they did learn', 'they learned', 'Not until', 'Inversion', 6),
+            ('C2', 'grammar', 'Were the truth ___ , it would shock everyone.', 'known', 'know', 'knows', 'knowing',
+             'known', 'Were the truth known', 'Passive subjunctive', 6),
+            ('C2', 'grammar', 'Should evidence ___ , we\'ll reconsider.', 'emerge', 'emerges', 'emerged', 'emerging',
+             'emerge', 'Should evidence emerge', 'Formal conditional', 6),
+            ('C2', 'grammar', 'Had permission ___ granted, we would have proceeded.', 'been', 'be', 'was', 'were',
+             'been', 'Had permission been', 'Passive conditional', 6),
+            ('C2', 'grammar', '___ the authorities to intervene, things might improve.', 'Were', 'Was', 'Are', 'Is',
+             'Were', 'Were the authorities to', 'Formal conditional', 6),
+            ('C2', 'grammar', 'Not for want of trying ___ succeed.', 'did he', 'he did', 'he', 'him', 'he did',
+             'Not for want of trying', 'Inversion', 6),
+            ('C2', 'grammar', 'In no way shape or form ___ acceptable.', 'is this', 'this is', 'are this', 'this are',
+             'this is', 'In no way', 'Inversion', 6),
+            ('C2', 'grammar', 'By no means whatsoever ___ justified.', 'was it', 'it was', 'were it', 'it were',
+             'it was', 'By no means', 'Inversion', 6),
+            ('C2', 'grammar', 'On no account under any circumstances ___ repeated.', 'should this be', 'this should be',
+             'be this', 'this be', 'this should be', 'On no account', 'Inversion', 6),
+            ('C2', 'grammar', 'Under no condition at any time ___ permitted.', 'will it be', 'it will be', 'be it',
+             'it be', 'it will be', 'Under no condition', 'Inversion', 6),
+            ('C2', 'grammar', 'Not a solitary soul ___ the answer.', 'knew', 'know', 'knows', 'knowing', 'knew',
+             'Not a solitary soul', 'Inversion', 6),
+            ('C2', 'grammar', 'Scarcely had a moment passed ___ he spoke again.', 'before', 'when', 'than', 'that',
+             'before', 'Scarcely... before', 'Inversion', 6),
+            ('C2', 'grammar', 'Hardly a soul ___ untouched by the news.', 'remained', 'remain', 'remains', 'remaining',
+             'remained', 'Hardly a soul', 'Inversion', 6),
+            ('C2', 'grammar', 'Barely a trace ___ of the original structure.', 'remains', 'remain', 'remained',
+             'remaining', 'remains', 'Barely a trace', 'Inversion', 6),
+            ('C2', 'grammar', 'No sooner had the thought ___ than he acted.', 'occurred', 'occur', 'occurs',
+             'occurring', 'occurred', 'No sooner had', 'Inversion', 6),
+            ('C2', 'grammar', 'Only by a stroke of genius ___ solution.', 'was the', 'the was', 'were the', 'the were',
+             'was the', 'Only by a stroke', 'Inversion', 6),
+            ('C2', 'grammar', 'Only through divine intervention ___ saved.', 'were they', 'they were', 'was they',
+             'they was', 'they were', 'Only through', 'Inversion', 6),
+            ('C2', 'grammar', 'Only with tremendous effort ___ accomplished.', 'was it', 'it was', 'were it', 'it were',
+             'it was', 'Only with', 'Inversion', 6),
+            ('C2', 'grammar', 'Only after exhaustive research ___ conclusions.', 'did we draw', 'we drew', 'drew we',
+             'we did draw', 'we drew', 'Only after', 'Inversion', 6),
+            ('C2', 'grammar', 'Only when hell freezes over ___ agree.', 'will I', 'I will', 'would I', 'I would',
+             'I will', 'Only when', 'Inversion', 6),
+            ('C2', 'grammar', 'Not only was he brilliant, ___ unparalleled.', 'but his insight was', 'his insight was',
+             'was his insight', 'but was his insight', 'but his insight was', 'Not only... but also',
+             'Parallel structure', 6),
+            ('C2', 'grammar', 'Neither at the beginning nor at the end ___ mentioned.', 'was it', 'it was', 'were it',
+             'it were', 'it was', 'Neither... nor', 'Subject-verb agreement', 6),
+            ('C2', 'grammar', 'Either now or at some future date ___ addressed.', 'must this be', 'this must be',
+             'be this', 'this be', 'this must be', 'Either... or', 'Modal inversion', 6),
+            ('C2', 'grammar', 'Both in theory and in practice ___ valid.', 'it is', 'is it', 'it was', 'was it',
+             'it is', 'Both... and', 'Tense agreement', 6),
+            ('C2', 'grammar', 'No more no less than the truth ___ demanded.', 'is', 'are', 'was', 'were', 'is',
+             'No more no less', 'Subject-verb agreement', 6),
+            ('C2', 'grammar', 'The more things change, ___ they stay the same.', 'the more', 'more', 'most', 'the most',
+             'the more', 'The more... the more', 'Comparative', 6),
+            ('C2', 'grammar', 'So it goes ___ say.', 'needless to', 'need to', 'needs to', 'needed to', 'needless to',
+             'So it goes', 'Fixed expression', 6),
+            ('C2', 'grammar', 'To make a long story short ___ outcome.', 'the', 'that', 'what', 'which', 'the',
+             'To make a long story short', 'Fixed expression', 6),
+            ('C2', 'grammar', 'When push comes to shove ___ counts.', 'what', 'that', 'which', 'who', 'what',
+             'When push comes to shove', 'Fixed expression', 6),
+            ('C2', 'grammar', 'Last but by no means least ___ opinion.', 'her', 'she', 'hers', 'herself', 'her',
+             'Last but not least', 'Fixed expression', 6),
+            ('C2', 'grammar', 'All things considered ___ reasonable.', 'it seems', 'seems it', 'it seem', 'seem it',
+             'it seems', 'All things considered', 'Fixed expression', 6),
+        ]
+        sample_questions.extend(c2_questions)
+
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.executemany('''
+            INSERT INTO english_questions 
+            (question_level, question_type, question_text, option1, option2, option3, option4, correct_option, explanation, hint, difficulty)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', sample_questions)
+
+        conn.commit()
+        conn.close()
+        print(f"Загружено {len(sample_questions)} вопросов в базу данных")
+
+    def get_questions_by_level(self, level: str, limit: int = 50) -> List[EnglishQuestion]:
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT id, question_level, question_type, question_text, 
+                   option1, option2, option3, option4, correct_option, explanation, hint
+            FROM english_questions 
+            WHERE question_level = ?
+            ORDER BY RANDOM()
+            LIMIT ?
+        ''', (level, limit))
+
+        questions = []
+        for row in cursor.fetchall():
+            question_id, question_level, question_type, question_text, \
+                option1, option2, option3, option4, correct_option, explanation, hint = row
+
+            questions.append(EnglishQuestion(
+                id=str(question_id),
+                level=question_level,
+                question_type=question_type,
+                question=question_text,
+                options=[option1, option2, option3, option4],
+                correct_answer=correct_option,
+                explanation=explanation,
+                hint=hint
+            ))
+
+        conn.close()
+        return questions
+
+    def add_question(self, question: EnglishQuestion):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            INSERT INTO english_questions 
+            (question_level, question_type, question_text, option1, option2, option3, option4, 
+             correct_option, explanation, hint, difficulty)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            question.level,
+            question.question_type,
+            question.question,
+            question.options[0] if len(question.options) > 0 else '',
+            question.options[1] if len(question.options) > 1 else '',
+            question.options[2] if len(question.options) > 2 else '',
+            question.options[3] if len(question.options) > 3 else '',
+            question.correct_answer,
+            question.explanation,
+            question.hint,
+            1
+        ))
 
         conn.commit()
         conn.close()
@@ -223,692 +1073,83 @@ class PlayerDatabase:
 
 class EnglishQuizSystem:
     def __init__(self):
-        self.all_questions = self.create_300_questions()
+        self.all_questions = []
         self.current_question = None
         self.used_questions_per_game = set()
         self.question_pool = {}
         self.question_cycle = 0
         self.level_questions_cache = {}
 
+    def load_questions_from_database(self, level: str):
+        print(f"Загрузка вопросов для уровня {level} из базы данных...")
+
+        db = PlayerDatabase()
+
+        questions = db.get_questions_by_level(level, limit=50)
+
+        if not questions:
+            print(f"Предупреждение: не найдено вопросов для уровня {level}. Загружаем резервные...")
+            questions = self.create_backup_questions(level)
+
+        print(f"Загружено {len(questions)} вопросов для уровня {level}")
+        return questions
+
+    def create_backup_questions(self, level: str):
+        backup_questions = []
+
+        base_questions = [
+            EnglishQuestion(
+                id=f"backup_{level}_1",
+                level=level,
+                question_type="vocabulary",
+                question=f"What is 'hello' in Russian?",
+                options=["Привет", "Пока", "Спасибо", "Извините"],
+                correct_answer="Привет",
+                explanation="Hello = привет",
+                hint="Greeting"
+            ),
+            EnglishQuestion(
+                id=f"backup_{level}_2",
+                level=level,
+                question_type="grammar",
+                question=f"I ___ a student.",
+                options=["am", "is", "are", "be"],
+                correct_answer="am",
+                explanation="I am",
+                hint="First person"
+            ),
+        ]
+
+        return base_questions
+
     def create_300_questions(self):
-        questions = []
-
-        a1_questions = self.create_a1_questions(50)
-        a2_questions = self.create_a2_questions(50)
-        b1_questions = self.create_b1_questions(50)
-        b2_questions = self.create_b2_questions(50)
-        c1_questions = self.create_c1_questions(50)
-        c2_questions = self.create_c2_questions(50)
-
-        all_q = []
-        level_prefixes = ["A1", "A2", "B1", "B2", "C1", "C2"]
-        level_questions = [a1_questions, a2_questions, b1_questions, b2_questions, c1_questions, c2_questions]
-
-        for level_idx, level_qs in enumerate(level_questions):
-            for q_idx, (question, options, correct, explanation, hint) in enumerate(level_qs):
-                clean_question = question.split(" (variation")[0]
-                all_q.append(EnglishQuestion(
-                    id=f"{level_prefixes[level_idx]}_{q_idx + 1}",
-                    level=level_prefixes[level_idx],
-                    question_type=random.choice(["vocabulary", "grammar", "translation"]),
-                    question=clean_question,
-                    options=options,
-                    correct_answer=correct,
-                    explanation=explanation,
-                    hint=hint
-                ))
-
-        print(f"Created {len(all_q)} questions total")
-        return all_q
+        print("Используется база данных для хранения вопросов. Метод create_300_questions не используется.")
+        return []
 
     def create_a1_questions(self, count):
-        base_questions = [
-            ("What is 'apple' in Russian?", ["Яблоко", "Банан", "Апельсин", "Груша"], "Яблоко",
-             "'Apple' = яблоко", "Common fruit"),
-            ("I ___ a student.", ["am", "is", "are", "be"], "am", "I am", "First person"),
-            ("What color is 'red'?", ["Красный", "Синий", "Зеленый", "Желтый"], "Красный", "Red = красный",
-             "Primary color"),
-            ("What is 'book' in Russian?", ["Книга", "Тетрадь", "Ручка", "Стол"], "Книга", "Book = книга",
-             "You read it"),
-            ("She ___ a teacher.", ["am", "is", "are", "be"], "is", "She is", "Third person"),
-            ("We ___ friends.", ["am", "is", "are", "be"], "are", "We are", "Plural"),
-            ("What is 'house' in Russian?", ["Дом", "Квартира", "Офис", "Школа"], "Дом", "House = дом",
-             "Building"),
-            ("He ___ happy.", ["am", "is", "are", "be"], "is", "He is", "Third person"),
-            ("What is 'water' in Russian?", ["Вода", "Сок", "Молоко", "Чай"], "Вода", "Water = вода",
-             "Essential"),
-            ("They ___ students.", ["am", "is", "are", "be"], "are", "They are", "Plural"),
-            ("My name ___ John.", ["am", "is", "are", "be"], "is", "Name is", "Third person"),
-            ("What is 'dog' in Russian?", ["Собака", "Кошка", "Птица", "Рыба"], "Собака", "Dog = собака",
-             "Pet"),
-            ("I ___ from London.", ["am", "is", "are", "be"], "am", "I am from", "First person"),
-            ("What is 'table' in Russian?", ["Стол", "Стул", "Кровать", "Шкаф"], "Стол", "Table = стол",
-             "Furniture"),
-            ("It ___ a cat.", ["am", "is", "are", "be"], "is", "It is", "Neutral"),
-            ("What is 'pen' in Russian?", ["Ручка", "Карандаш", "Линейка", "Ластик"], "Ручка", "Pen = ручка",
-             "Writing"),
-            ("You ___ welcome.", ["am", "is", "are", "be"], "are", "You are", "Second person"),
-            ("What is 'school' in Russian?", ["Школа", "Университет", "Библиотека", "Больница"], "Школа",
-             "School = школа", "Education"),
-            ("The sky ___ blue.", ["am", "is", "are", "be"], "is", "Sky is", "Third person"),
-            ("What is 'computer' in Russian?", ["Компьютер", "Телефон", "Телевизор", "Холодильник"],
-             "Компьютер", "Computer = компьютер", "Technology"),
-            ("I ___ 20 years old.", ["am", "is", "are", "be"], "am", "I am", "Age"),
-            ("What is 'mother' in Russian?", ["Мама", "Папа", "Сестра", "Брат"], "Мама", "Mother = мама",
-             "Family"),
-            ("She ___ my sister.", ["am", "is", "are", "be"], "is", "She is", "Family relation"),
-            ("What is 'car' in Russian?", ["Машина", "Автобус", "Поезд", "Самолет"], "Машина", "Car = машина",
-             "Transport"),
-            ("We ___ at home.", ["am", "is", "are", "be"], "are", "We are", "Location"),
-            ("What is 'friend' in Russian?", ["Друг", "Враг", "Коллега", "Знакомый"], "Друг", "Friend = друг",
-             "Relationships"),
-            ("He ___ a doctor.", ["am", "is", "are", "be"], "is", "He is", "Profession"),
-            ("What is 'city' in Russian?", ["Город", "Деревня", "Страна", "Улица"], "Город", "City = город",
-             "Geography"),
-            ("They ___ here.", ["am", "is", "are", "be"], "are", "They are", "Location"),
-            ("What is 'time' in Russian?", ["Время", "Место", "Деньги", "Работа"], "Время", "Time = время",
-             "Concepts"),
-            ("I ___ hungry.", ["am", "is", "are", "be"], "am", "I am", "Feeling"),
-            ("What is 'money' in Russian?", ["Деньги", "Время", "Здоровье", "Удача"], "Деньги",
-             "Money = деньги", "Finance"),
-            ("She ___ beautiful.", ["am", "is", "are", "be"], "is", "She is", "Description"),
-            ("What is 'work' in Russian?", ["Работа", "Учеба", "Отдых", "Хобби"], "Работа", "Work = работа",
-             "Activity"),
-            ("You ___ right.", ["am", "is", "are", "be"], "are", "You are", "Agreement"),
-            ("What is 'day' in Russian?", ["День", "Ночь", "Утро", "Вечер"], "День", "Day = день", "Time"),
-            ("It ___ cold.", ["am", "is", "are", "be"], "is", "It is", "Weather"),
-            ("What is 'night' in Russian?", ["Ночь", "День", "Утро", "Полдень"], "Ночь", "Night = ночь",
-             "Time"),
-            ("We ___ ready.", ["am", "is", "are", "be"], "are", "We are", "State"),
-            ("What is 'year' in Russian?", ["Год", "Месяц", "Неделя", "День"], "Год", "Year = год", "Time"),
-            ("He ___ tall.", ["am", "is", "are", "be"], "is", "He is", "Description"),
-            ("What is 'month' in Russian?", ["Месяц", "Год", "Неделя", "День"], "Месяц", "Month = месяц",
-             "Time"),
-            ("They ___ busy.", ["am", "is", "are", "be"], "are", "They are", "State"),
-            ("What is 'week' in Russian?", ["Неделя", "Месяц", "Год", "День"], "Неделя", "Week = неделя",
-             "Time"),
-            ("I ___ sorry.", ["am", "is", "are", "be"], "am", "I am", "Apology"),
-            ("What is 'hour' in Russian?", ["Час", "Минута", "Секунда", "Время"], "Час", "Hour = час",
-             "Time"),
-            ("She ___ late.", ["am", "is", "are", "be"], "is", "She is", "Time"),
-            ("What is 'minute' in Russian?", ["Минута", "Час", "Секунда", "День"], "Минута",
-             "Minute = минута", "Time"),
-            ("You ___ early.", ["am", "is", "are", "be"], "are", "You are", "Time"),
-            ("What is 'second' in Russian?", ["Секунда", "Минута", "Час", "Время"], "Секунда",
-             "Second = секунда", "Time"),
-        ]
-
-        questions = []
-        for i in range(count):
-            base_q = base_questions[i % len(base_questions)]
-            questions.append((base_q[0], base_q[1], base_q[2], base_q[3], base_q[4]))
-
-        return questions
+        return []
 
     def create_a2_questions(self, count):
-        base_questions = [
-            ("They ___ watching TV now.", ["is", "am", "are", "be"], "are", "They are watching",
-             "Present Continuous"),
-            ("Opposite of 'big'?", ["Small", "Large", "Huge", "Giant"], "Small", "Small ≠ big", "Antonyms"),
-            ("I ___ to school every day.", ["go", "goes", "going", "went"], "go", "I go", "Present Simple"),
-            ("How do you say 'быстрый' in English?", ["Fast", "Slow", "Quickly", "Rapid"], "Fast",
-             "Fast = быстрый", "Adjectives"),
-            ("She usually ___ coffee in the morning.", ["drink", "drinks", "drinking", "drank"], "drinks",
-             "She drinks", "Third person s"),
-            ("I ___ reading a book.", ["am", "is", "are", "be"], "am", "I am reading", "Present Continuous"),
-            ("We ___ playing football.", ["am", "is", "are", "be"], "are", "We are playing",
-             "Present Continuous"),
-            ("He ___ running fast.", ["am", "is", "are", "be"], "is", "He is running", "Present Continuous"),
-            ("What is the opposite of 'hot'?", ["Cold", "Warm", "Cool", "Freezing"], "Cold", "Cold ≠ hot",
-             "Temperature"),
-            ("I have ___ apple.", ["a", "an", "the", "some"], "an", "an before vowel", "Articles"),
-            ("She ___ to music now.", ["listen", "listens", "listening", "is listening"], "is listening",
-             "Present Continuous", "Now"),
-            ("What is the opposite of 'day'?", ["Night", "Morning", "Evening", "Afternoon"], "Night",
-             "Night ≠ day", "Time"),
-            ("They ___ dinner at 7 pm.", ["have", "has", "having", "had"], "have", "They have",
-             "Present Simple"),
-            ("I ___ like coffee.", ["doesn't", "don't", "isn't", "aren't"], "don't", "I don't like",
-             "Negation"),
-            ("What is 'interesting' in Russian?", ["Интересный", "Скучный", "Сложный", "Простой"],
-             "Интересный", "Interesting = интересный", "Adjectives"),
-            ("She ___ speak French.", ["can", "could", "should", "would"], "can", "She can", "Modal verbs"),
-            ("We ___ to the cinema yesterday.", ["go", "went", "going", "gone"], "went", "We went",
-             "Past Simple"),
-            ("What is the opposite of 'young'?", ["Old", "New", "Small", "Big"], "Old", "Old ≠ young", "Age"),
-            ("I ___ my homework every day.", ["do", "does", "doing", "did"], "do", "I do", "Present Simple"),
-            ("He ___ basketball well.", ["play", "plays", "playing", "played"], "plays", "He plays",
-             "Third person s"),
-            ("They ___ English lessons.", ["have", "has", "having", "had"], "have", "They have",
-             "Present Simple"),
-            ("What is 'difficult' in Russian?", ["Сложный", "Легкий", "Интересный", "Скучный"], "Сложный",
-             "Difficult = сложный", "Adjectives"),
-            ("I ___ want to go.", ["doesn't", "don't", "isn't", "aren't"], "don't", "I don't want",
-             "Negation"),
-            ("What is the opposite of 'good'?", ["Bad", "Better", "Best", "Nice"], "Bad", "Bad ≠ good",
-             "Antonyms"),
-            ("She ___ breakfast at 8 am.", ["eat", "eats", "eating", "ate"], "eats", "She eats",
-             "Third person s"),
-            ("We ___ swimming on weekends.", ["go", "goes", "going", "went"], "go", "We go",
-             "Present Simple"),
-            ("What is 'expensive' in Russian?", ["Дорогой", "Дешевый", "Красивый", "Современный"], "Дорогой",
-             "Expensive = дорогой", "Adjectives"),
-            ("He ___ drive a car.", ["can", "could", "should", "would"], "can", "He can", "Ability"),
-            ("They ___ their grandparents last week.", ["visit", "visited", "visiting", "visits"], "visited",
-             "They visited", "Past Simple"),
-            ("What is the opposite of 'rich'?", ["Poor", "Wealthy", "Happy", "Sad"], "Poor", "Poor ≠ rich",
-             "Antonyms"),
-            ("I ___ understand you.", ["doesn't", "don't", "isn't", "aren't"], "don't", "I don't understand",
-             "Negation"),
-            ("What is 'beautiful' in Russian?", ["Красивый", "Страшный", "Большой", "Маленький"], "Красивый",
-             "Beautiful = красивый", "Adjectives"),
-            ("She ___ a letter now.", ["write", "writes", "writing", "is writing"], "is writing",
-             "Present Continuous", "Now"),
-            ("We ___ lunch together.", ["have", "has", "having", "had"], "have", "We have", "Present Simple"),
-            ("What is the opposite of 'happy'?", ["Sad", "Glad", "Joyful", "Excited"], "Sad", "Sad ≠ happy",
-             "Emotions"),
-            ("He ___ his room every Saturday.", ["clean", "cleans", "cleaning", "cleaned"], "cleans",
-             "He cleans", "Third person s"),
-            ("They ___ in London last year.", ["live", "lived", "living", "lives"], "lived", "They lived",
-             "Past Simple"),
-            ("What is 'important' in Russian?", ["Важный", "Неважный", "Интересный", "Скучный"], "Важный",
-             "Important = важный", "Adjectives"),
-            ("I ___ usually tired in the evening.", ["am", "is", "are", "be"], "am", "I am", "Feeling"),
-            ("What is the opposite of 'begin'?", ["Finish", "Start", "Continue", "Stop"], "Finish",
-             "Finish ≠ begin", "Verbs"),
-            ("She ___ shopping every Friday.", ["go", "goes", "going", "went"], "goes", "She goes",
-             "Third person s"),
-            ("We ___ a new car last month.", ["buy", "bought", "buying", "buys"], "bought", "We bought",
-             "Past Simple"),
-            ("What is 'dangerous' in Russian?", ["Опасный", "Безопасный", "Интересный", "Скучный"], "Опасный",
-             "Dangerous = опасный", "Adjectives"),
-            ("He ___ to work by bus.", ["go", "goes", "going", "went"], "goes", "He goes", "Third person s"),
-            ("They ___ to the beach yesterday.", ["go", "went", "going", "gone"], "went", "They went",
-             "Past Simple"),
-            ("What is the opposite of 'open'?", ["Close", "Start", "Begin", "Enter"], "Close", "Close ≠ open",
-             "Verbs"),
-            ("I ___ a shower every morning.", ["take", "takes", "taking", "took"], "take", "I take",
-             "Present Simple"),
-            ("She ___ her phone at home.", ["leave", "left", "leaving", "leaves"], "left", "She left",
-             "Past Simple"),
-            ("What is 'possible' in Russian?", ["Возможный", "Невозможный", "Интересный", "Скучный"],
-             "Возможный", "Possible = возможный", "Adjectives"),
-            ("We ___ our friends tomorrow.", ["meet", "meets", "meeting", "will meet"], "will meet",
-             "We will meet", "Future"),
-        ]
-
-        questions = []
-        for i in range(count):
-            base_q = base_questions[i % len(base_questions)]
-            questions.append((base_q[0], base_q[1], base_q[2], base_q[3], base_q[4]))
-
-        return questions
+        return []
 
     def create_b1_questions(self, count):
-        base_questions = [
-            ("If I ___ you, I would study more.", ["was", "were", "am", "is"], "were", "Second conditional",
-             "Conditional"),
-            ("She has ___ to London.", ["been", "gone", "went", "go"], "been", "Has been", "Present Perfect"),
-            ("I ___ my keys yesterday.", ["lose", "lost", "losed", "losing"], "lost", "Past simple",
-             "Irregular verbs"),
-            ("He ___ already eaten.", ["has", "have", "had", "having"], "has", "Has eaten",
-             "Present Perfect"),
-            ("We ___ for 2 hours.", ["have waited", "has waited", "waiting", "waited"], "have waited",
-             "Have waited", "Duration"),
-            ("By next year, I ___ English for 5 years.", ["will study", "will have studied", "studied",
-                                                          "study"], "will have studied", "Future Perfect",
-             "Tenses"),
-            ("If it rains, we ___ cancel the picnic.", ["will", "would", "shall", "should"], "will",
-             "First conditional", "Conditional"),
-            ("She wishes she ___ taller.", ["was", "were", "is", "be"], "were", "Wishes", "Subjunctive"),
-            ("I'm used to ___ early.", ["wake up", "waking up", "woke up", "woken up"], "waking up",
-             "Used to + ing", "Gerund"),
-            ("He ___ rather stay home.", ["would", "will", "shall", "should"], "would", "Would rather",
-             "Preferences"),
-            ("The movie was ___ than I expected.", ["interesting", "more interesting", "most interesting",
-                                                    "interestinger"], "more interesting", "Comparative",
-             "Adjectives"),
-            ("I ___ a car since 2010.", ["have had", "had", "have", "has"], "have had", "Present Perfect",
-             "Duration"),
-            ("She ___ be here by now.", ["should", "would", "could", "might"], "should",
-             "Should for expectation", "Modal verbs"),
-            ("If I had known, I ___ come.", ["would have", "will have", "would", "will"], "would have",
-             "Third conditional", "Conditional"),
-            ("He asked me where ___ .", ["I live", "do I live", "did I live", "I lived"], "I lived",
-             "Reported speech", "Indirect questions"),
-            ("By the time we arrived, they ___ .", ["had left", "left", "have left", "leave"], "had left",
-             "Past Perfect", "Tenses"),
-            ("I look forward to ___ you.", ["see", "seeing", "saw", "seen"], "seeing", "Look forward to + ing",
-             "Gerund"),
-            ("She's the woman ___ helped me.", ["which", "who", "whom", "whose"], "who", "Relative clause",
-             "Pronouns"),
-            ("I wish I ___ more time.", ["have", "had", "has", "having"], "had", "Wishes", "Subjunctive"),
-            ("It's time we ___ .", ["leave", "left", "leaving", "have left"], "left", "It's time",
-             "Subjunctive"),
-            ("I'd rather you ___ that.", ["don't do", "didn't do", "won't do", "not do"], "didn't do",
-             "Would rather", "Preferences"),
-            ("This is ___ book I've ever read.", ["good", "better", "the best", "best"], "the best",
-             "Superlative", "Adjectives"),
-            ("He ___ if he had more time.", ["will help", "would help", "helps", "helped"], "would help",
-             "Second conditional", "Conditional"),
-            ("She's used to ___ in the city.", ["live", "lives", "living", "lived"], "living", "Used to + ing",
-             "Gerund"),
-            ("I ___ you if I need help.", ["will call", "would call", "called", "call"], "will call",
-             "First conditional", "Conditional"),
-            ("He suggested ___ to the cinema.", ["go", "going", "to go", "went"], "going", "Suggest + ing",
-             "Gerund"),
-            ("If I were you, I ___ that.", ["won't do", "wouldn't do", "didn't do", "don't do"], "wouldn't do",
-             "Second conditional", "Conditional"),
-            ("She ___ have told me earlier.", ["should", "would", "could", "might"], "should",
-             "Should for advice", "Modal verbs"),
-            ("I regret ___ you.", ["tell", "telling", "to tell", "told"], "telling", "Regret + ing", "Gerund"),
-            ("He denied ___ the money.", ["take", "taking", "took", "taken"], "taking", "Deny + ing", "Gerund"),
-            ("I'll call you when I ___ home.", ["get", "will get", "got", "getting"], "get", "Time clause",
-             "Tenses"),
-            ("She ___ the report by tomorrow.", ["finish", "will finish", "finishes", "will have finished"],
-             "will have finished", "Future Perfect", "Tenses"),
-            ("If he ___ harder, he would pass.", ["studies", "studied", "study", "will study"], "studied",
-             "Second conditional", "Conditional"),
-            ("I can't help ___ about it.", ["think", "thinking", "to think", "thought"], "thinking",
-             "Can't help + ing", "Gerund"),
-            ("He admitted ___ wrong.", ["be", "being", "to be", "been"], "being", "Admit + ing", "Gerund"),
-            ("She avoided ___ him.", ["meet", "meeting", "to meet", "met"], "meeting", "Avoid + ing", "Gerund"),
-            ("I'm considering ___ a new job.", ["look for", "looking for", "to look for", "looked for"],
-             "looking for", "Consider + ing", "Gerund"),
-            ("He delayed ___ a decision.", ["make", "making", "to make", "made"], "making", "Delay + ing",
-             "Gerund"),
-            ("She enjoys ___ novels.", ["read", "reading", "to read", "reads"], "reading", "Enjoy + ing",
-             "Gerund"),
-            ("He finished ___ the report.", ["write", "writing", "to write", "wrote"], "writing", "Finish + ing",
-             "Gerund"),
-            ("I imagine ___ there.", ["live", "living", "to live", "lived"], "living", "Imagine + ing",
-             "Gerund"),
-            ("She mentioned ___ him before.", ["meet", "meeting", "to meet", "met"], "meeting",
-             "Mention + ing", "Gerund"),
-            ("He missed ___ the train.", ["catch", "catching", "to catch", "caught"], "catching", "Miss + ing",
-             "Gerund"),
-            ("I practice ___ English every day.", ["speak", "speaking", "to speak", "spoke"], "speaking",
-             "Practice + ing", "Gerund"),
-            ("She quit ___ last year.", ["smoke", "smoking", "to smoke", "smoked"], "smoking", "Quit + ing",
-             "Gerund"),
-            ("He recalled ___ her somewhere.", ["see", "seeing", "to see", "saw"], "seeing", "Recall + ing",
-             "Gerund"),
-            ("I recommend ___ early.", ["book", "booking", "to book", "booked"], "booking", "Recommend + ing",
-             "Gerund"),
-            ("She resented ___ treated unfairly.", ["be", "being", "to be", "been"], "being", "Resent + ing",
-             "Gerund"),
-            ("He risked ___ his job.", ["lose", "losing", "to lose", "lost"], "losing", "Risk + ing", "Gerund"),
-            ("I suggest ___ a break.", ["take", "taking", "to take", "took"], "taking", "Suggest + ing",
-             "Gerund"),
-        ]
-
-        questions = []
-        for i in range(count):
-            base_q = base_questions[i % len(base_questions)]
-            questions.append((base_q[0], base_q[1], base_q[2], base_q[3], base_q[4]))
-
-        return questions
+        return []
 
     def create_b2_questions(self, count):
-        base_questions = [
-            ("Had I known, I ___ helped.", ["would have", "will have", "would", "will"], "would have",
-             "Third conditional", "Inversion"),
-            ("The report ___ by tomorrow.", ["will finish", "will be finished", "finishes", "finished"],
-             "will be finished", "Future Passive", "Passive voice"),
-            ("I object ___ treated like a child.", ["to be", "to being", "being", "be"], "to being",
-             "Object to + ing", "Gerund"),
-            ("Not only ___ late, but he also forgot the documents.", ["he was", "was he", "did he", "he did"],
-             "was he", "Inversion", "Sentence structure"),
-            ("Had I ___ sooner, I could have prevented it.", ["act", "acted", "acting", "action"], "acted",
-             "Past Perfect", "Conditional"),
-            ("I'd rather you ___ here.", ["stay", "stayed", "staying", "to stay"], "stayed", "Would rather",
-             "Subjunctive"),
-            ("It's high time we ___ a decision.", ["make", "made", "making", "to make"], "made",
-             "It's high time", "Subjunctive"),
-            ("But for your help, I ___ succeeded.", ["wouldn't have", "won't have", "didn't have", "haven't"],
-             "wouldn't have", "But for", "Conditional"),
-            ("___ I you, I'd accept the offer.", ["Was", "Were", "Am", "Be"], "Were", "Were I you",
-             "Formal conditional"),
-            ("Little ___ she know what was coming.", ["did", "does", "do", "has"], "did", "Little did",
-             "Inversion"),
-            ("Hardly ___ I arrived when it started raining.", ["had", "have", "did", "was"], "had",
-             "Hardly had", "Inversion"),
-            ("No sooner ___ he left than the phone rang.", ["had", "has", "did", "was"], "had",
-             "No sooner had", "Inversion"),
-            ("Under no circumstances ___ allowed.", ["smoking is", "is smoking", "smoking", "smoke"],
-             "is smoking", "Under no circumstances", "Inversion"),
-            ("Only by working hard ___ succeed.", ["you can", "can you", "you will", "will you"], "can you",
-             "Only by", "Inversion"),
-            ("Such ___ the situation that we had to act.", ["was", "were", "is", "are"], "was", "Such was",
-             "Inversion"),
-            ("Never before ___ such beauty.", ["I saw", "saw I", "have I seen", "I have seen"], "have I seen",
-             "Never before", "Inversion"),
-            ("Rarely ___ so disappointed.", ["have I been", "I have been", "was I", "I was"], "have I been",
-             "Rarely", "Inversion"),
-            ("Not until later ___ realize the truth.", ["did I", "I did", "I", "me"], "did I", "Not until",
-             "Inversion"),
-            ("So difficult ___ that few could solve it.", ["was the problem", "the problem was",
-                                                           "were the problem", "the problem were"],
-             "was the problem", "So difficult", "Inversion"),
-            ("Only then ___ understand.", ["did I", "I did", "I", "me"], "did I", "Only then", "Inversion"),
-            ("Were I ___ time, I would help.", ["have", "had", "has", "having"], "had", "Were I",
-             "Formal conditional"),
-            ("Should you ___ any problems, call me.", ["have", "had", "has", "having"], "have", "Should you",
-             "Formal conditional"),
-            ("Had they ___ earlier, they would have caught the train.", ["left", "leave", "leaving", "leaves"],
-             "left", "Had they", "Conditional perfect"),
-            ("Not for one moment ___ I believe him.", ["did", "do", "does", "have"], "did",
-             "Not for one moment", "Inversion"),
-            ("At no time ___ aware of the danger.", ["was he", "he was", "were he", "he were"], "was he",
-             "At no time", "Inversion"),
-            ("In no way ___ responsible.", ["is he", "he is", "are he", "he are"], "is he", "In no way",
-             "Inversion"),
-            ("On no account ___ this door.", ["open you", "you open", "open", "do you open"], "do you open",
-             "On no account", "Inversion"),
-            ("By no means ___ the best solution.", ["is this", "this is", "are this", "this are"], "is this",
-             "By no means", "Inversion"),
-            ("Not a word ___ during the meeting.", ["did he say", "he said", "said he", "he did say"],
-             "did he say", "Not a word", "Inversion"),
-            ("Scarcely ___ when the phone rang.", ["had he arrived", "he had arrived", "arrived he",
-                                                   "he arrived"], "had he arrived", "Scarcely", "Inversion"),
-            ("Barely ___ when the storm started.", ["had we left", "we had left", "left we", "we left"],
-             "had we left", "Barely", "Inversion"),
-            ("No way ___ that!", ["am I doing", "I am doing", "do I do", "I do"], "am I doing", "No way",
-             "Inversion"),
-            ("In vain ___ to convince him.", ["did we try", "we tried", "tried we", "we did try"], "did we try",
-             "In vain", "Inversion"),
-            ("Not once ___ consider our proposal.", ["did they", "they did", "they", "them"], "did they",
-             "Not once", "Inversion"),
-            ("Only after months ___ the truth.", ["did we learn", "we learned", "learned we", "we did learn"],
-             "did we learn", "Only after", "Inversion"),
-            ("Only when it's too late ___ appreciate what we had.", ["do we", "we do", "we", "us"], "do we",
-             "Only when", "Inversion"),
-            ("Only by chance ___ the mistake.", ["did we discover", "we discovered", "discovered we",
-                                                 "we did discover"], "did we discover", "Only by chance",
-             "Inversion"),
-            ("Only through hard work ___ success.", ["can you achieve", "you can achieve", "achieve you",
-                                                     "you achieve"], "can you achieve", "Only through",
-             "Inversion"),
-            ("Not only intelligent but also ___ .", ["hardworking is he", "he is hardworking", "is he hardworking",
-                                                     "hardworking he is"], "he is hardworking",
-             "Not only... but also", "Parallel structure"),
-            ("Neither the manager nor the employees ___ satisfied.", ["is", "are", "was", "were"], "are",
-             "Neither... nor", "Subject-verb agreement"),
-            ("Either you or I ___ mistaken.", ["am", "are", "is", "were"], "am", "Either... or",
-             "Subject-verb agreement"),
-            ("Not just the students but also the teacher ___ present.", ["was", "were", "are", "is"], "was",
-             "Not just... but also", "Subject-verb agreement"),
-            ("Both the book and the movie ___ interesting.", ["is", "are", "was", "were"], "are",
-             "Both... and", "Subject-verb agreement"),
-            ("No sooner said than ___ .", ["done", "did", "do", "doing"], "done", "No sooner... than",
-             "Fixed expression"),
-            ("The more you practice, ___ you become.", ["better", "the better", "good", "the good"], "the better",
-             "The more... the better", "Comparative"),
-            ("So quickly ___ that nobody noticed.", ["did he leave", "he left", "left he", "he did leave"],
-             "did he leave", "So quickly", "Inversion"),
-            ("To such an extent ___ that we had to stop.", ["did he complain", "he complained", "complained he",
-                                                            "he did complain"], "did he complain",
-             "To such an extent", "Inversion"),
-            ("With no difficulty ___ the test.", ["did he pass", "he passed", "passed he", "he did pass"],
-             "did he pass", "With no difficulty", "Inversion"),
-            ("On no occasion ___ late.", ["has he been", "he has been", "been he", "he been"], "has he been",
-             "On no occasion", "Inversion"),
-            ("Under no condition ___ this information.", ["should you share", "you should share", "share you",
-                                                          "you share"], "should you share",
-             "Under no condition", "Inversion"),
-        ]
-
-        questions = []
-        for i in range(count):
-            base_q = base_questions[i % len(base_questions)]
-            questions.append((base_q[0], base_q[1], base_q[2], base_q[3], base_q[4]))
-
-        return questions
+        return []
 
     def create_c1_questions(self, count):
-        base_questions = [
-            ("___ had he arrived than the phone rang.", ["No sooner", "Hardly", "Scarcely", "Barely"],
-             "No sooner", "No sooner... than", "Inversion"),
-            ("Such ___ the complexity that few understood.", ["was", "were", "is", "are"], "was", "Such was",
-             "Inversion"),
-            ("Were the situation ___, we'd act differently.", ["to arise", "arising", "arose", "arisen"],
-             "to arise", "Were + to", "Formal conditional"),
-            ("___ be said that honesty is the best policy.", ["It may", "It might", "It can", "It could"],
-             "It may", "It may be said", "Formal expression"),
-            ("Not until later ___ the full implications.", ["did he realize", "he realized", "realized he",
-                                                            "he did realize"], "did he realize", "Not until",
-             "Inversion"),
-            ("So compelling ___ that everyone listened.", ["was the argument", "the argument was",
-                                                           "were the argument", "the argument were"],
-             "was the argument", "So compelling", "Inversion"),
-            ("Had it not been for the warning, disaster ___.", ["would have struck", "will strike", "struck",
-                                                                "strikes"], "would have struck",
-             "Had it not been", "Conditional"),
-            ("Rarely ___ such dedication.", ["does one encounter", "one encounters", "encounters one",
-                                             "one does encounter"], "does one encounter", "Rarely", "Inversion"),
-            ("Under no circumstances ___ the deadline.", ["can we extend", "we can extend", "extend we can",
-                                                          "can extend we"], "can we extend",
-             "Under no circumstances", "Inversion"),
-            ("Only by working together ___ solve this.", ["can we", "we can", "we will", "will we"], "can we",
-             "Only by", "Inversion"),
-            ("Little ___ he suspect the truth.", ["did", "does", "do", "has"], "did", "Little did", "Inversion"),
-            ("So intense ___ that it became unbearable.", ["was the pressure", "the pressure was",
-                                                           "were the pressure", "the pressure were"],
-             "was the pressure", "So intense", "Inversion"),
-            ("Never ___ such incompetence.", ["had I witnessed", "I had witnessed", "witnessed I", "I witnessed"],
-             "had I witnessed", "Never had", "Inversion"),
-            ("Not for all the money in the world ___ that.", ["would I do", "I would do", "I do", "do I"],
-             "would I do", "Not for", "Inversion"),
-            ("Only when it's too late ___ appreciate what we had.", ["do we", "we do", "we", "us"], "do we",
-             "Only when", "Inversion"),
-            ("So convincing ___ that nobody doubted him.", ["was his story", "his story was", "were his story",
-                                                            "his story were"], "was his story", "So convincing",
-             "Inversion"),
-            ("At no time ___ aware of the danger.", ["was he", "he was", "were he", "he were"], "was he",
-             "At no time", "Inversion"),
-            ("Not once ___ consider the consequences.", ["did he", "he did", "he", "him"], "did he",
-             "Not once", "Inversion"),
-            ("Only after years of study ___ master the technique.", ["did he", "he did", "he", "him"], "did he",
-             "Only after", "Inversion"),
-            ("Such ___ his determination that failure was impossible.", ["was", "were", "is", "are"], "was",
-             "Such was", "Inversion"),
-            ("Had I ___ to, I would have objected.", ["wanted", "want", "wants", "wanting"], "wanted",
-             "Had I wanted", "Conditional perfect"),
-            ("Were he ___ , he would understand.", ["to know", "know", "knows", "knowing"], "to know",
-             "Were he to know", "Formal conditional"),
-            ("Should there ___ any problems, contact us.", ["be", "is", "are", "were"], "be",
-             "Should there be", "Formal conditional"),
-            ("Had the weather ___ better, we would have gone.", ["been", "be", "was", "were"], "been",
-             "Had the weather been", "Conditional perfect"),
-            ("___ we to succeed, it would be miraculous.", ["Were", "Was", "Are", "Is"], "Were", "Were we to",
-             "Formal conditional"),
-            ("Not for the life of me ___ remember.", ["can I", "I can", "could I", "I could"], "can I",
-             "Not for the life of me", "Inversion"),
-            ("In no uncertain terms ___ his disapproval.", ["did he express", "he expressed", "expressed he",
-                                                            "he did express"], "did he express",
-             "In no uncertain terms", "Inversion"),
-            ("By no stretch of the imagination ___ acceptable.", ["is this", "this is", "are this", "this are"],
-             "is this", "By no stretch", "Inversion"),
-            ("On no account whatsoever ___ disturbed.", ["should he be", "he should be", "be he", "he be"],
-             "should he be", "On no account", "Inversion"),
-            ("Under no circumstances whatever ___ tolerated.", ["will this be", "this will be", "be this",
-                                                                "this be"], "will this be",
-             "Under no circumstances", "Inversion"),
-            ("Not a single word of apology ___ .", ["did he offer", "he offered", "offered he", "he did offer"],
-             "did he offer", "Not a single word", "Inversion"),
-            ("Scarcely a day goes by ___ I think of it.", ["that", "when", "which", "where"], "that",
-             "Scarcely... that", "Inversion"),
-            ("Hardly anyone ___ the truth.", ["knows", "know", "knew", "knowing"], "knows", "Hardly anyone",
-             "Inversion"),
-            ("Barely had the words ___ his lips when he regretted them.", ["left", "leave", "leaving", "leaves"],
-             "left", "Barely had", "Inversion"),
-            ("No sooner had we ___ than the trouble started.", ["arrived", "arrive", "arriving", "arrives"],
-             "arrived", "No sooner had", "Inversion"),
-            ("Only by a miracle ___ survived.", ["did they", "they did", "they", "them"], "did they",
-             "Only by a miracle", "Inversion"),
-            ("Only through sheer determination ___ overcome.", ["did she", "she did", "she", "her"], "did she",
-             "Only through", "Inversion"),
-            ("Only with great difficulty ___ persuaded.", ["was he", "he was", "were he", "he were"], "was he",
-             "Only with", "Inversion"),
-            ("Only after much deliberation ___ a decision.", ["did we reach", "we reached", "reached we",
-                                                              "we did reach"], "did we reach", "Only after",
-             "Inversion"),
-            ("Only when all else fails ___ desperate measures.", ["do we resort to", "we resort to",
-                                                                  "resort we to", "we do resort to"],
-             "do we resort to", "Only when", "Inversion"),
-            ("Not only did he fail, ___ made things worse.", ["but he also", "also he", "he also", "but also he"],
-             "but he also", "Not only... but also", "Parallel structure"),
-            ("Neither here nor there ___ the matter.", ["is", "are", "was", "were"], "is", "Neither... nor",
-             "Subject-verb agreement"),
-            ("Either now or never ___ chance.", ["is our", "our is", "are our", "our are"], "is our",
-             "Either... or", "Subject-verb agreement"),
-            ("Both then and now ___ important.", ["it was", "was it", "it is", "is it"], "it is", "Both... and",
-             "Tense agreement"),
-            ("No more no less ___ required.", ["is", "are", "was", "were"], "is", "No more no less",
-             "Subject-verb agreement"),
-            ("The sooner the better ___ situation.", ["is the", "the is", "are the", "the are"], "is the",
-             "The sooner the better", "Fixed expression"),
-            ("So be it ___ decided.", ["is", "are", "was", "were"], "is", "So be it", "Fixed expression"),
-            ("To cut a long story short ___ happened.", ["what", "that", "which", "who"], "what",
-             "To cut a long story short", "Fixed expression"),
-            ("When all is said and done ___ matters.", ["what", "that", "which", "who"], "what",
-             "When all is said and done", "Fixed expression"),
-            ("Last but not least ___ contribution.", ["his", "him", "he", "himself"], "his", "Last but not least",
-             "Fixed expression"),
-        ]
-
-        questions = []
-        for i in range(count):
-            base_q = base_questions[i % len(base_questions)]
-            questions.append((base_q[0], base_q[1], base_q[2], base_q[3], base_q[4]))
-
-        return questions
+        return []
 
     def create_c2_questions(self, count):
-        base_questions = [
-            ("___ he to apologize, I might reconsider.", ["Were", "Was", "Be", "Being"], "Were", "Were he to",
-             "Formal conditional"),
-            ("So intricate ___ that it took years to decipher.", ["was the code", "the code was", "were the code",
-                                                                  "the code were"], "was the code", "So intricate",
-             "Inversion"),
-            ("Never before ___ such a spectacle.", ["had I witnessed", "I had witnessed", "witnessed I",
-                                                    "I witnessed"], "had I witnessed", "Never before", "Inversion"),
-            ("___ the consequences, he proceeded anyway.", ["Notwithstanding", "Despite", "Although", "Whereas"],
-             "Notwithstanding", "Notwithstanding", "Formal preposition"),
-            ("Little did they realize what ___ them.", ["awaited", "awaiting", "await", "awaits"], "awaited",
-             "What awaited", "Past simple"),
-            ("Had I but known, ___ differently.", ["would I have acted", "I would have acted", "I acted",
-                                                   "I would act"], "I would have acted", "Had I but known",
-             "Conditional"),
-            ("___ they succeed remains to be seen.", ["Whether", "If", "That", "What"], "Whether",
-             "Whether they succeed", "Formal clause"),
-            ("Such ___ his determination that failure was impossible.", ["was", "were", "is", "are"], "was",
-             "Such was", "Inversion"),
-            ("___ all efforts, the project failed.", ["Notwithstanding", "Despite", "Although", "Whereas"],
-             "Notwithstanding", "Notwithstanding", "Formal preposition"),
-            ("Had circumstances ___ different, the outcome would vary.", ["been", "be", "being", "are"], "been",
-             "Had circumstances been", "Conditional"),
-            ("So profound ___ that it changed everything.", ["was the impact", "the impact was", "were the impact",
-                                                             "the impact were"], "was the impact", "So profound",
-             "Inversion"),
-            ("Never in my wildest dreams ___ imagine this.", ["could I have", "I could have", "I could",
-                                                              "could I"], "could I have", "Never", "Inversion"),
-            ("Only by sheer luck ___ survive.", ["did we", "we did", "we", "us"], "did we", "Only by",
-             "Inversion"),
-            ("Not for one moment ___ doubt her.", ["did I", "I did", "I", "me"], "did I",
-             "Not for one moment", "Inversion"),
-            ("So elaborate ___ that it seemed impossible.", ["was the plan", "the plan was", "were the plan",
-                                                             "the plan were"], "was the plan", "So elaborate",
-             "Inversion"),
-            ("At no point ___ consider giving up.", ["did we", "we did", "we", "us"], "did we", "At no point",
-             "Inversion"),
-            ("Only through perseverance ___ overcome.", ["can one", "one can", "one", "ones"], "can one",
-             "Only through", "Inversion"),
-            ("Such ___ the mystery that it captivated all.", ["was", "were", "is", "are"], "was", "Such was",
-             "Inversion"),
-            ("Had I the means, ___ differently.", ["would I act", "I would act", "I acted", "I act"], "I would act",
-             "Had I", "Conditional"),
-            ("Not until the very end ___ the truth.", ["did they learn", "they learned", "learned they",
-                                                       "they did learn"], "did they learn", "Not until",
-             "Inversion"),
-            ("Were the truth ___ , it would shock everyone.", ["known", "know", "knows", "knowing"], "known",
-             "Were the truth known", "Passive subjunctive"),
-            ("Should evidence ___ , we'll reconsider.", ["emerge", "emerges", "emerged", "emerging"], "emerge",
-             "Should evidence emerge", "Formal conditional"),
-            ("Had permission ___ granted, we would have proceeded.", ["been", "be", "was", "were"], "been",
-             "Had permission been", "Passive conditional"),
-            ("___ the authorities to intervene, things might improve.", ["Were", "Was", "Are", "Is"], "Were",
-             "Were the authorities to", "Formal conditional"),
-            ("Not for want of trying ___ succeed.", ["did he", "he did", "he", "him"], "did he",
-             "Not for want of trying", "Inversion"),
-            ("In no way shape or form ___ acceptable.", ["is this", "this is", "are this", "this are"], "is this",
-             "In no way", "Inversion"),
-            ("By no means whatsoever ___ justified.", ["was it", "it was", "were it", "it were"], "was it",
-             "By no means", "Inversion"),
-            ("On no account under any circumstances ___ repeated.", ["should this be", "this should be", "be this",
-                                                                     "this be"], "should this be", "On no account",
-             "Inversion"),
-            ("Under no condition at any time ___ permitted.", ["will it be", "it will be", "be it", "it be"],
-             "will it be", "Under no condition", "Inversion"),
-            ("Not a solitary soul ___ the answer.", ["knew", "know", "knows", "knowing"], "knew",
-             "Not a solitary soul", "Inversion"),
-            ("Scarcely had a moment passed ___ he spoke again.", ["before", "when", "than", "that"], "before",
-             "Scarcely... before", "Inversion"),
-            ("Hardly a soul ___ untouched by the news.", ["remained", "remain", "remains", "remaining"], "remained",
-             "Hardly a soul", "Inversion"),
-            ("Barely a trace ___ of the original structure.", ["remains", "remain", "remained", "remaining"],
-             "remains", "Barely a trace", "Inversion"),
-            ("No sooner had the thought ___ than he acted.", ["occurred", "occur", "occurs", "occurring"],
-             "occurred", "No sooner had", "Inversion"),
-            ("Only by a stroke of genius ___ solution.", ["was the", "the was", "were the", "the were"], "was the",
-             "Only by a stroke", "Inversion"),
-            ("Only through divine intervention ___ saved.", ["were they", "they were", "was they", "they was"],
-             "were they", "Only through", "Inversion"),
-            ("Only with tremendous effort ___ accomplished.", ["was it", "it was", "were it", "it were"], "was it",
-             "Only with", "Inversion"),
-            ("Only after exhaustive research ___ conclusions.", ["did we draw", "we drew", "drew we",
-                                                                 "we did draw"], "did we draw", "Only after",
-             "Inversion"),
-            ("Only when hell freezes over ___ agree.", ["will I", "I will", "would I", "I would"], "will I",
-             "Only when", "Inversion"),
-            ("Not only was he brilliant, ___ unparalleled.", ["but his insight was", "his insight was",
-                                                              "was his insight", "but was his insight"],
-             "but his insight was", "Not only... but also", "Parallel structure"),
-            ("Neither at the beginning nor at the end ___ mentioned.", ["was it", "it was", "were it", "it were"],
-             "was it", "Neither... nor", "Subject-verb agreement"),
-            ("Either now or at some future date ___ addressed.", ["must this be", "this must be", "be this",
-                                                                  "this be"], "must this be", "Either... or",
-             "Modal inversion"),
-            ("Both in theory and in practice ___ valid.", ["it is", "is it", "it was", "was it"], "it is",
-             "Both... and", "Tense agreement"),
-            ("No more no less than the truth ___ demanded.", ["is", "are", "was", "were"], "is",
-             "No more no less", "Subject-verb agreement"),
-            ("The more things change, ___ they stay the same.", ["the more", "more", "most", "the most"],
-             "the more", "The more... the more", "Comparative"),
-            ("So it goes ___ say.", ["needless to", "need to", "needs to", "needed to"], "needless to",
-             "So it goes", "Fixed expression"),
-            ("To make a long story short ___ outcome.", ["the", "that", "what", "which"], "the",
-             "To make a long story short", "Fixed expression"),
-            ("When push comes to shove ___ counts.", ["what", "that", "which", "who"], "what",
-             "When push comes to shove", "Fixed expression"),
-            ("Last but by no means least ___ opinion.", ["her", "she", "hers", "herself"], "her",
-             "Last but not least", "Fixed expression"),
-            ("All things considered ___ reasonable.", ["it seems", "seems it", "it seem", "seem it"], "it seems",
-             "All things considered", "Fixed expression"),
-        ]
-
-        questions = []
-        for i in range(count):
-            base_q = base_questions[i % len(base_questions)]
-            questions.append((base_q[0], base_q[1], base_q[2], base_q[3], base_q[4]))
-
-        return questions
+        return []
 
     def initialize_game_questions(self, level: str):
+        level_questions = self.load_questions_from_database(level)
+
         if level in self.level_questions_cache:
             all_level_questions = self.level_questions_cache[level][:]
         else:
-            level_questions = [q for q in self.all_questions if q.level == level]
             self.level_questions_cache[level] = level_questions[:]
             all_level_questions = level_questions
 
@@ -935,11 +1176,11 @@ class EnglishQuizSystem:
 
         self.used_questions_per_game = set()
         self.question_cycle = 0
-        print(f"Initialized {len(self.question_pool)} question pairs for level {level}")
+        print(f"Инициализировано {len(self.question_pool)} пар вопросов для уровня {level}")
 
     def get_question_for_key(self, key_index: int):
         if key_index not in self.question_pool:
-            print(f"No question available for key {key_index}")
+            print(f"Нет доступных вопросов для ключа {key_index}")
             return None
 
         pool_item = self.question_pool[key_index]
@@ -1202,17 +1443,6 @@ class Platform:
 
         arcade.draw_lrbt_rectangle_filled(left, right, bottom, top, self.color)
         arcade.draw_lrbt_rectangle_outline(left, right, bottom, top, arcade.color.GREEN, 2)
-
-    def check_collision(self, player_x, player_y, player_radius=25):
-        left = self.center_x - self.width // 2
-        right = self.center_x + self.width // 2
-        bottom = self.center_y - self.height // 2
-        top = self.center_y + self.height // 2
-
-        if (player_x + player_radius > left and player_x - player_radius < right and
-                player_y - player_radius < top + 10 and player_y - player_radius > bottom - 10):
-            return True
-        return False
 
 
 class ParticleSystem:
@@ -2026,7 +2256,8 @@ class HighScoresView(arcade.View):
                 arcade.draw_text(display_name, column_positions[1], y, row_color, 14, align="center", anchor_x="center")
                 arcade.draw_text(str(score), column_positions[2], y, row_color, 14, align="center", anchor_x="center")
                 arcade.draw_text(str(level), column_positions[3], y, row_color, 14, align="center", anchor_x="center")
-                arcade.draw_text(display_level, column_positions[4], y, row_color, 14, align="center", anchor_x="center")
+                arcade.draw_text(display_level, column_positions[4], y, row_color, 14, align="center",
+                                 anchor_x="center")
 
         self.back_button.draw()
         self.clear_button.draw()
@@ -2299,11 +2530,7 @@ class GameView(arcade.View):
         self.player_y = 0
         self.is_jumping = False
         self.jump_velocity = 0
-        self.gravity = GRAVITY
         self.on_ground = False
-        self.max_jump_height = MAX_JUMP_HEIGHT
-        self.jump_power = JUMP_POWER
-        self.on_ground_height = ON_GROUND_HEIGHT
         self.current_level = 1
         self.keys_collected = 0
         self.keys_required = KEYS_PER_LEVEL
@@ -2336,6 +2563,12 @@ class GameView(arcade.View):
         self.move_dx = 0
         self.move_dy = 0
         self.collected_stations = []
+        self.level_score = 0
+        self.physics_engine = PhysicsEngine()  # Добавляем физический движок
+        self.door_message_time = 0  # Время показа сообщения у двери
+        self.door_message_duration = 2.0  # Длительность показа сообщения
+        self.show_door_message = False  # Показывать ли сообщение у двери
+        self.door_message_text = ""  # Текст сообщения у двери
 
     def on_show_view(self):
         print("GameView показан")
@@ -2347,6 +2580,8 @@ class GameView(arcade.View):
         self.last_key_press_time = time.time()
         self.move_dx = 0
         self.move_dy = 0
+        self.door_message_time = 0
+        self.show_door_message = False
 
     def on_hide_view(self):
         if self.footstep_sound:
@@ -2390,6 +2625,9 @@ class GameView(arcade.View):
         self.last_key_press_time = time.time()
         self.move_dx = 0
         self.move_dy = 0
+        self.level_score = 0
+        self.door_message_time = 0
+        self.show_door_message = False
         self.create_level()
 
     def create_level(self):
@@ -2415,24 +2653,44 @@ class GameView(arcade.View):
 
         if level_num == 1:
             internal_walls = [
-                (400, 500, 30, 200),
+                (380, 550, 30, 200),
                 (700, 350, 30, 150),
-                (250, 300, 200, 30),
+                (180, 450, 200, 30),
             ]
         elif level_num == 2:
             internal_walls = [
                 (500, 600, 30, 300),
-                (300, 400, 200, 30),
+                (250, 500, 200, 30),
                 (700, 300, 30, 200),
                 (600, 200, 150, 30),
             ]
-        else:
+
+        elif level_num == 3:
             internal_walls = [
                 (350, 550, 30, 200),
                 (650, 500, 30, 250),
-                (500, 400, 200, 30),
-                (250, 250, 150, 30),
-                (750, 250, 150, 30),
+                (250, 150, 150, 30),
+                (750, 220, 150, 30),
+            ]
+
+        elif level_num == 4:
+            internal_walls = [
+                (200, 600, 30, 300),
+                (800, 600, 30, 300),
+                (300, 500, 30, 200),
+                (650, 450, 30, 200),
+                (250, 170, 150, 30),
+                (750, 200, 150, 30),
+            ]
+
+        elif level_num == 5:
+            internal_walls = [
+                (250, 600, 200, 30),
+                (750, 600, 200, 30),
+                (500, 500, 400, 30),
+                (250, 300, 30, 200),
+                (900, 300, 30, 200),
+                (400, 150, 300, 30),
             ]
 
         self.walls = base_walls + internal_walls
@@ -2667,9 +2925,8 @@ class GameView(arcade.View):
         if self.final_door:
             self.final_door.draw()
 
-            if self.final_door.locked:
-                keys_needed = self.keys_required - self.keys_collected
-                lines = [f"NEEDS {keys_needed}", f"MORE KEYS"]
+            if self.show_door_message and self.door_message_time > 0:
+                lines = self.door_message_text.split('\n')
                 for i, line in enumerate(lines):
                     arcade.draw_text(
                         line,
@@ -2745,7 +3002,11 @@ class GameView(arcade.View):
             10, 5, arcade.color.BLACK, 180, 360, 2
         )
 
-        wave_offset = math.sin(time.time() * 5) * 5
+        # Анимация только при движении
+        wave_offset = 0
+        if self.key_left or self.key_right or self.key_up or self.key_down:
+            wave_offset = math.sin(time.time() * 5) * 5
+
         arcade.draw_line(
             self.player_x - 12, self.player_y,
             self.player_x - 25, self.player_y + wave_offset,
@@ -2787,34 +3048,15 @@ class GameView(arcade.View):
             bold=True
         )
 
-        sound_text = "🔇 DISABLE SOUND" if self.sound_enabled else "🔊 ENABLE SOUND"
         self.pause_buttons = [
             Button(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 40, 250, 50,
                    "▶ RESUME", self.resume_game, arcade.color.GREEN),
             Button(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 20, 250, 50,
-                   sound_text, self.toggle_sound, arcade.color.ORANGE),
-            Button(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 80, 250, 50,
                    "🔄 RESTART LEVEL", self.restart_level, arcade.color.ORANGE),
         ]
 
         for button in self.pause_buttons:
             button.draw()
-
-    def toggle_sound(self):
-        if self.sound_manager:
-            self.sound_manager.play_button_click()
-
-        self.sound_enabled = not self.sound_enabled
-
-        if self.sound_manager:
-            self.sound_manager.set_sound_enabled(self.sound_enabled)
-
-        if self.database:
-            self.database.update_player_sound_setting(self.player_name, self.sound_enabled)
-
-        for button in self.pause_buttons:
-            if "SOUND" in button.text:
-                button.text = "🔇 DISABLE SOUND" if self.sound_enabled else "🔊 ENABLE SOUND"
 
     def resume_game(self):
         if self.sound_manager:
@@ -2825,6 +3067,10 @@ class GameView(arcade.View):
     def restart_level(self):
         if self.sound_manager:
             self.sound_manager.play_button_click()
+
+        self.total_score -= self.level_score
+        self.level_score = 0
+
         self.start_level()
         self.game_paused = False
         self.pause_buttons = []
@@ -2836,6 +3082,11 @@ class GameView(arcade.View):
         current_time = time.time()
         self.level_time = current_time - self.level_start_time
 
+        if self.show_door_message:
+            self.door_message_time -= delta_time
+            if self.door_message_time <= 0:
+                self.show_door_message = False
+
         for enemy in self.enemies:
             enemy.update(self.player_x, self.player_y, delta_time)
 
@@ -2843,9 +3094,7 @@ class GameView(arcade.View):
             self.final_door.update(delta_time)
 
         self.particle_system.update(delta_time)
-        self.update_jump_physics(delta_time)
-
-        self.move_player(delta_time)
+        self.update_player_physics(delta_time)
 
         self.check_interactions()
 
@@ -2863,25 +3112,53 @@ class GameView(arcade.View):
                 self.last_footstep_time = current_time
                 self.sound_manager.play_sound('footstep', volume=0.3)
 
-    def update_jump_physics(self, delta_time):
-        if not self.on_ground:
-            self.jump_velocity -= self.gravity * delta_time * 40
+    def update_player_physics(self, delta_time):
+        self.jump_velocity = self.physics_engine.apply_gravity(
+            self.jump_velocity, self.on_ground, delta_time
+        )
 
-            if self.jump_velocity < -15:
-                self.jump_velocity = -15
+        dx = 0
+        if self.key_left:
+            dx -= 1
+        if self.key_right:
+            dx += 1
 
-        self.player_y += self.jump_velocity * delta_time * 40
+        vertical_movement = self.jump_velocity * delta_time
+        dy = 0
+        if vertical_movement != 0:
+            dy = 1 if vertical_movement > 0 else -1
 
-        self.on_ground = False
-        player_radius = 25
+        new_x, new_y, self.on_ground = self.physics_engine.apply_movement(
+            self.player_x, self.player_y,
+            dx, dy,
+            self.walls, self.platforms,
+            delta_time
+        )
 
-        for platform in self.platforms:
-            if platform.check_collision(self.player_x, self.player_y, player_radius):
-                self.on_ground = True
+        if self.jump_velocity != 0:
+            jump_test_y = self.player_y + self.jump_velocity * delta_time * 40
+
+            if not self.physics_engine.check_collision_with_walls(self.player_x, jump_test_y, self.walls):
+                new_y = jump_test_y
+            else:
                 self.jump_velocity = 0
-                platform_top = platform.center_y + platform.height // 2
-                self.player_y = platform_top + player_radius
-                break
+
+        self.player_x, self.player_y = new_x, new_y
+
+        self.player_x = max(35, min(SCREEN_WIDTH - 35, self.player_x))
+        self.player_y = max(70, min(SCREEN_HEIGHT - 70, self.player_y))
+
+        if not self.on_ground:
+            for platform in self.platforms:
+                if (self.player_x + 25 > platform.center_x - platform.width // 2 and
+                        self.player_x - 25 < platform.center_x + platform.width // 2 and
+                        self.player_y - 25 <= platform.center_y + platform.height // 2 and
+                        self.player_y - 25 >= platform.center_y - platform.height // 2 and
+                        self.jump_velocity <= 0):
+                    self.on_ground = True
+                    self.jump_velocity = 0
+                    self.player_y = platform.center_y + platform.height // 2 + 25
+                    break
 
         if self.player_y < 45:
             self.player_y = 45
@@ -2890,7 +3167,7 @@ class GameView(arcade.View):
 
     def jump(self):
         if self.on_ground:
-            self.jump_velocity = self.jump_power
+            self.jump_velocity = JUMP_POWER
             self.on_ground = False
             self.is_jumping = True
 
@@ -2898,64 +3175,9 @@ class GameView(arcade.View):
                 self.sound_manager.play_sound('jump', volume=0.4)
 
             self.particle_system.create_explosion(
-                self.player_x, self.player_y - 20,
+                self.player_x, self.player_y - 25,
                 arcade.color.LIGHT_BLUE, 8
             )
-
-    def move_player(self, delta_time):
-        old_x, old_y = self.player_x, self.player_y
-
-        dx = 0
-        dy = 0
-
-        if self.key_up:
-            dy += 1
-        if self.key_down:
-            dy -= 1
-        if self.key_left:
-            dx -= 1
-        if self.key_right:
-            dx += 1
-
-        if dx != 0 or dy != 0:
-            length = math.sqrt(dx * dx + dy * dy)
-            dx /= length
-            dy /= length
-
-        speed_multiplier = 1.0
-        if not self.on_ground:
-            speed_multiplier = 0.7
-
-        self.move_dx = dx * self.movement_speed * delta_time * speed_multiplier
-        self.move_dy = dy * self.movement_speed * delta_time * speed_multiplier
-
-        self.player_x += self.move_dx
-        self.player_y += self.move_dy
-
-        if self.check_wall_collision(self.player_x, self.player_y):
-            self.player_x, self.player_y = old_x, old_y
-
-        self.player_x = max(30, min(SCREEN_WIDTH - 30, self.player_x))
-        self.player_y = max(50, min(SCREEN_HEIGHT - 50, self.player_y))
-
-    def check_wall_collision(self, x, y):
-        player_radius = 22
-
-        for wall_x, wall_y, wall_width, wall_height in self.walls:
-            wall_left = wall_x - wall_width // 2
-            wall_right = wall_x + wall_width // 2
-            wall_bottom = wall_y - wall_height // 2
-            wall_top = wall_y + wall_height // 2
-
-            closest_x = max(wall_left, min(x, wall_right))
-            closest_y = max(wall_bottom, min(y, wall_top))
-
-            distance = math.sqrt((x - closest_x) ** 2 + (y - closest_y) ** 2)
-
-            if distance < player_radius:
-                return True
-
-        return False
 
     def check_interactions(self):
         if not self.game_active:
@@ -2994,19 +3216,23 @@ class GameView(arcade.View):
             if distance < 40:
                 if self.final_door.locked:
                     if self.keys_collected < self.keys_required:
-                        self.game_active = False
                         keys_needed = self.keys_required - self.keys_collected
-                        message_view = MessageView(
-                            self,
-                            f"Нужно еще {keys_needed} ключей!\nСоберите все 5 ключей.",
-                            "Продолжить"
-                        )
-                        self.window.show_view(message_view)
+                        keys_text = get_keys_text(keys_needed)
+                        self.door_message_text = f"Нужно еще {keys_needed} {keys_text}!"
+                        self.show_door_message = True
+                        self.door_message_time = self.door_message_duration
+                    else:
+                        self.final_door.open()
+                        if self.sound_manager:
+                            self.sound_manager.play_sound('door_open', volume=0.5)
                 else:
                     self.complete_level()
 
     def restart_level_from_enemy(self):
         print("Перезапуск уровня из-за врага!")
+
+        self.total_score -= self.level_score
+        self.level_score = 0
 
         if hasattr(self, 'sound_manager') and self.sound_manager and self.sound_enabled:
             self.sound_manager.play_sound('enemy_hit', volume=0.5)
@@ -3047,15 +3273,14 @@ class GameView(arcade.View):
         perfect_bonus = 50 if self.keys_collected == self.keys_required else 0
         level_completion_bonus = 100
 
-        final_score = level_completion_bonus + time_bonus + perfect_bonus
-
-        self.total_score += final_score
+        self.level_score = level_completion_bonus + time_bonus + perfect_bonus
+        self.total_score += self.level_score
 
         self.database.update_player_progress(
             self.player_name,
             self.current_level,
             self.keys_collected,
-            final_score,
+            self.level_score,
             correct=self.correct_answers
         )
 
@@ -3118,6 +3343,7 @@ class GameView(arcade.View):
             for btn in self.pause_buttons:
                 if btn.check_hover(x, y):
                     btn.on_click()
+                    return
 
 
 class QuizView(arcade.View):
@@ -3213,7 +3439,10 @@ class QuizView(arcade.View):
                 self.answered = True
                 self.game_view.keys_collected += 1
                 self.game_view.correct_answers += 1
+
+                self.game_view.level_score += score_earned
                 self.game_view.total_score += score_earned
+
                 self.game_view.collected_stations.append(self.station_index)
 
                 if self.sound_manager:
